@@ -111,7 +111,7 @@ dgx1_1gpu_fp16: &dgx1_1gpu_fp16
 dgx1_1gpu_fp32: &dgx1_1gpu_fp32
    train:
       <<: *train
-      batch_chunk: 64
+      batch_chunk: 32
    eval:
       <<: *eval
 
