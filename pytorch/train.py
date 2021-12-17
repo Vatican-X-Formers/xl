@@ -790,6 +790,7 @@ def main():
                                   args.eval_tgt_len, device=device,
                                   mem_len=eval_mem_len, ext_len=args.ext_len)
 
+    print(f'NCCL: {torch.cuda.nccl.version()}')
     # adaptive softmax / embedding
     cutoffs, tie_projs = [], [False]
     if args.adaptive:
