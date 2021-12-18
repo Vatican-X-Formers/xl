@@ -42,6 +42,7 @@ except ModuleNotFoundError:
 
 from torch.nn.parallel import DistributedDataParallel
 
+import neptune.new as neptune
 import lamb
 import utils
 from data_utils import get_lm_corpus
@@ -693,6 +694,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
 
 def main():
+    run = neptune.init('syzymon/hourglass-pytorch')
     args = parse_args()
     if args.affinity != 'disabled':
         nproc_per_node = torch.cuda.device_count()
