@@ -15,6 +15,7 @@ train: &train
   dropatt: 0.0
   optim: adam
   lr: 0.00025
+  eta_min: 0.0
   warmup_step: 0
   max_step: 400000
   tgt_len: 512
