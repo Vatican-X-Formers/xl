@@ -1,0 +1,50 @@
+# Base
+enwik8: &enwik8
+  dataset: enwik8
+  data: ../data/enwik8/
+
+train: &train
+  <<: *enwik8
+  cuda: true
+  n_layer: 12
+  d_model: 512
+  n_head: 8
+  d_head: 64
+  d_inner: 2048
+  dropout: 0.1
+  dropatt: 0.0
+  optim: adam
+  lr: 0.00025
+  warmup_step: 0
+  max_step: 400000
+  tgt_len: 512
+  mem_len: 512
+  eval_tgt_len: 128
+  batch_size: 24
+  multi_gpu: ddp
+  log_interval: 100
+  eval_interval: 5000
+  vocab: word
+  adaptive: true
+
+eval: &eval
+  <<: *enwik8
+  cuda: true
+  tgt_len: 80
+  mem_len: 2100
+  clamp_len: 820
+  same_length: true
+  split: test
+
+default:
+  train:
+    <<: *train
+  eval:
+    <<: *eval
+
+dgx1_4gpu_fp32: &dgx1_4gpu_fp32
+  train:
+    <<: *train
+    batch_chunk: 1
+  eval:
+    <<: *eval
