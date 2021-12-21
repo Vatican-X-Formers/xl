@@ -23,7 +23,7 @@ if [[ $1 == 'train' ]]; then
         --mem_len 512 \
         --eval_tgt_len 128 \
         --batch_size 22 \
-        --multi_gpu dp \
+        --multi_gpu ddp \
         --gpu0_bsz 4 \
         --batch_chunk 1 \
         ${@:2}
