@@ -225,9 +225,9 @@ class OpenAIVocab(Vocab):
             # Suppress warnings about length.
             with open(os.devnull, "w") as devnull, contextlib.redirect_stderr(devnull):
                 out = torch.LongTensor(self.tokenizer.encode(f.read()) + [self.EOT])
-                with utils.distributed.sync_workers() as rank:
-                    if rank == 0:
-                        torch.save(out, cached)
+                # with utils.distributed.sync_workers() as rank:
+                #     if rank == 0:
+                #         torch.save(out, cached)
                 return out
 
     def tokenize(self, line, add_eos=False, add_double_eos=False):

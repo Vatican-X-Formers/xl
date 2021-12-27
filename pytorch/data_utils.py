@@ -337,9 +337,9 @@ def get_lm_corpus(datadir, dataset, vocab):
             pass
 
         corpus = Corpus(datadir, dataset, vocab, **kwargs)
-        with utils.distributed.sync_workers() as rank:
-            if rank == 0:
-                torch.save(corpus, fn)
+        # with utils.distributed.sync_workers() as rank:
+        #     if rank == 0:
+        #         torch.save(corpus, fn)
 
     return corpus
 

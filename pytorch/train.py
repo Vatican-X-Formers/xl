@@ -334,8 +334,8 @@ def save_checkpoint(args, model, model_config, optimizer, scheduler, scaler,
         last_chkpt_path = os.path.join(work_dir, last_chkpt_fname)
         if rank == 0:
             # always save last checkpoint
-            logging.info(f'Saving checkpoint to {last_chkpt_path}')
-            torch.save(state, last_chkpt_path)
+            # logging.info(f'Saving checkpoint to {last_chkpt_path}')
+            # torch.save(state, last_chkpt_path)
 
             # save best checkpoint if better than previous best
             if is_best:
