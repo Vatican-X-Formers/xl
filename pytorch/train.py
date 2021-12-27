@@ -56,6 +56,7 @@ from utils.exp_utils import l2_promote
 from utils.exp_utils import log_env_info
 from utils.exp_utils import register_ignoring_timeout_handler
 
+run = None
 
 def parse_args():
     parent_parser = argparse.ArgumentParser(
@@ -610,6 +611,11 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     cur_loss,
                     )
 
+            if run:
+                run['lr'].log(lr, step=train_step)
+                run['train/loss'].log(cur_loss, step=train_step)
+                run['tokens_per_sec'].log(throughput, step=train_step)
+
             dllogger_data = {
                 'epoch': epoch,
                 'train_batch': batch+1,
@@ -646,6 +652,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                           (time.time() - eval_start_time),
                           val_loss,
                           )
+            if run:
+                run['val/loss'].log(val_loss, step=train_step)
 
             dllogger_data = {
                 'valid_elapsed': (time.time() - eval_start_time),
@@ -695,7 +703,6 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
 
 def main():
-    run = neptune.init('syzymon/hourglass-pytorch')
     args = parse_args()
     if args.affinity != 'disabled':
         nproc_per_node = torch.cuda.device_count()
@@ -833,6 +840,11 @@ def main():
         'funnel_config': args.funnel_config,
         'funnel_resample': args.funnel_resample,
         }
+    if rank == 0:
+        global run
+        run = neptune.init('syzymon/hourglass-pytorch')
+        run['model_config'] = model_config
+        run['args'] = vars(args)
 
     model = MemTransformerLM(**model_config)
 
