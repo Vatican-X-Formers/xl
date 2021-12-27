@@ -511,12 +511,55 @@ class MemTransformerLM(nn.Module):
                     cat = torch.cat([mems, stacked], dim=1)
                 else:
                     cat = stacked
-                # print(cat.size(), beg_idx, end_idx, mem_len)
                 new_mems = cat[:, beg_idx:end_idx].detach()
 
         return new_mems
+        
 
-    
+    def _forward(self, core_input, mems=None, layers = None, tgt_len = 0, mem_len = 0, clamp_len = 0):
+        qlen, bsz, _ = core_input.size()        
+
+        mlen = mems[0].size(0) if mems is not None else 0
+        klen = mlen + qlen
+        if self.same_length:
+            all_ones = core_input.new_ones(qlen, klen)
+            mask_len = klen - mem_len - 1
+            if mask_len > 0:
+                mask_shift_len = qlen - mask_len
+            else:
+                mask_shift_len = qlen
+            dec_attn_mask = (torch.triu(all_ones, 1+mlen)
+                             + torch.tril(all_ones, -mask_shift_len)).bool()
+        else:
+            dec_attn_mask = torch.triu(
+                core_input.new_ones(qlen, klen), diagonal=1+mlen).bool()
+
+        hids = []
+        pos_seq = torch.arange(klen-1, -1, -1.0, device=core_input.device,
+                                dtype=core_input.dtype)
+
+        if clamp_len > 0:
+            pos_seq.clamp_(max=clamp_len)
+
+        pos_emb = self.pos_emb(pos_seq)
+        pos_emb = self.drop(pos_emb)
+
+        core_out = core_input
+
+        for i, layer in enumerate(layers):
+            hids.append(core_out.detach())
+            mems_i = None if mems is None else mems[i]
+            core_out = layer(core_out, pos_emb, self.r_w_bias,
+                                self.r_r_bias, dec_attn_mask=dec_attn_mask,
+                                mems=mems_i)
+
+        core_out = self.drop(core_out)
+        hids.append(core_out.detach())
+
+        new_mems = self._update_mems(hids, mems, qlen, mlen, tgt_len, mem_len)
+        return core_out, new_mems
+
+
     def forward(self, data, target, mems):
         if mems is None:
             mems = self.init_mems() 
@@ -600,50 +643,6 @@ class MemTransformerLM(nn.Module):
         loss = loss.view(tgt_len, -1)
 
         return (loss, new_mems)
-        
-
-    def _forward(self, core_input, mems=None, layers = None, tgt_len = 0, mem_len = 0, clamp_len = 0):
-        qlen, bsz, _ = core_input.size()        
-
-        mlen = mems[0].size(0) if mems is not None else 0
-        klen = mlen + qlen
-        if self.same_length:
-            all_ones = core_input.new_ones(qlen, klen)
-            mask_len = klen - mem_len - 1
-            if mask_len > 0:
-                mask_shift_len = qlen - mask_len
-            else:
-                mask_shift_len = qlen
-            dec_attn_mask = (torch.triu(all_ones, 1+mlen)
-                             + torch.tril(all_ones, -mask_shift_len)).bool()
-        else:
-            dec_attn_mask = torch.triu(
-                core_input.new_ones(qlen, klen), diagonal=1+mlen).bool()
-
-        hids = []
-        pos_seq = torch.arange(klen-1, -1, -1.0, device=core_input.device,
-                                dtype=core_input.dtype)
-
-        if clamp_len > 0:
-            pos_seq.clamp_(max=clamp_len)
-
-        pos_emb = self.pos_emb(pos_seq)
-        pos_emb = self.drop(pos_emb)
-
-        core_out = core_input
-
-        for i, layer in enumerate(layers):
-            hids.append(core_out.detach())
-            mems_i = None if mems is None else mems[i]
-            core_out = layer(core_out, pos_emb, self.r_w_bias,
-                                self.r_r_bias, dec_attn_mask=dec_attn_mask,
-                                mems=mems_i)
-
-        core_out = self.drop(core_out)
-        hids.append(core_out.detach())
-
-        new_mems = self._update_mems(hids, mems, qlen, mlen, tgt_len, mem_len)
-        return core_out, new_mems
 
 
 if __name__ == '__main__':
