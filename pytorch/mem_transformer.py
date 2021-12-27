@@ -417,7 +417,7 @@ class MemTransformerLM(nn.Module):
 
         self.attn_type = attn_type
 
-        def create_decoder_layers(n_layers, sf = 1):
+        def create_decoder_layers(n_layers):
             layers = nn.ModuleList([
                 RelPartialLearnableDecoderLayer(
                         n_head, d_model, d_head, d_inner, dropout,
@@ -435,7 +435,7 @@ class MemTransformerLM(nn.Module):
                     'Keep lengths divisible by sf'
 
         self.layers = nn.ModuleList([
-            create_decoder_layers(pre_layers, sf = 1),
+            create_decoder_layers(pre_layers),
             Downsampler(
                 embedding_dim=d_model,
                 downsample_factor=shorten_factor,
@@ -447,7 +447,7 @@ class MemTransformerLM(nn.Module):
                 upsample_factor=shorten_factor,
                 mode=funnel_resample
             ),
-            create_decoder_layers(post_layers, sf = 1),
+            create_decoder_layers(post_layers),
         ])
 
         self.sample_softmax = sample_softmax
@@ -573,10 +573,9 @@ class MemTransformerLM(nn.Module):
                                 self.r_r_bias, dec_attn_mask=dec_attn_mask,
                                 mems=mems_i)
 
-        core_out = self.drop(core_out)
         hids.append(core_out.detach())
-
         new_mems = self._update_mems(hids, mems, qlen, mlen, tgt_len, mem_len)
+
         return core_out, new_mems
 
 
@@ -635,9 +634,8 @@ class MemTransformerLM(nn.Module):
                 new_mems.append(new_mem)
                 mems_index += 1
 
-        if hidden.size()[:2] != target.size():
-            import pdb
-            pdb.set_trace()
+
+        hidden = self.drop(hidden)
         # Loss calculation
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
