@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
+import pdb
 
 
 @torch.jit.script
@@ -603,23 +604,9 @@ class MemTransformerLM(nn.Module):
 
             if isinstance(layers, Upsampler):
                 # The residual come from the latest downsampler
-                # import pdb
-                # pdb.set_trace()
-                hidden = layers(hidden, new_mems[-2][-1][:tgt_len])
+                hidden = layers(hidden, residual=new_mems[-2][-1][-tgt_len:])
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
-                # input = 123, target = 234
-                # 01 23
-
-                # input = 456, target = 567
-                # 34 56
-
-                # input = 1234, target = 2345
-                # 01 23 4
-
-                # input = 567, target = 678
-                # 45 67 8
-
                 hidden = layers(hidden, mems[mems_index - 1])
                 current_sf *= layers.downsample_factor
             else:
