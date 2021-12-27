@@ -441,7 +441,7 @@ class MemTransformerLM(nn.Module):
                 downsample_factor=shorten_factor,
                 mode=funnel_resample
             ),
-            create_decoder_layers(funnel_layers, sf = shorten_factor),
+            create_decoder_layers(funnel_layers),
             Upsampler(
                 embedding_dim=d_model,
                 upsample_factor=shorten_factor,
