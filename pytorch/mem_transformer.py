@@ -305,7 +305,7 @@ class Upsampler(nn.Module):
         if mode == 'linear':
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
     
-    def forward(self, x):
+    def forward(self, x, residual):
         # T x B x C
         if self.mode == 'linear':
             # T x B x C -> B x T x C
@@ -315,6 +315,9 @@ class Upsampler(nn.Module):
             x = x.transpose(0, 1)
         else:
             x = x.repeat_interleave(self.upsample_factor, dim=0)
+
+        assert x.size(0) >= residual.size(0)
+        x = x[:residual.size(0)] + residual
 
         return x
 
@@ -335,9 +338,25 @@ class Downsampler(nn.Module):
                 stride = downsample_factor
             )
     
-    def forward(self, x):
+    def forward(self, x, mems):
+        # Input is of shape T x B x C
+        sf = self.downsample_factor
+
+        if mems.numel() > 0:
+            last_mems = mems[-1] # Outputs of the first stack of vanillas
+            assert last_mems.size(0) > (sf - 1)
+            x = torch.cat([last_mems[-(sf - 1):], x], dim = 0)
+        else:
+            padding = torch.zeros((sf - 1, x.size(1), x.size(2))).to(x.device)
+            x = torch.cat([padding, x], dim = 0)
+
+        if x.size(0) % sf > 0:
+            # Hack to prevent destroing the tensor when T is divisible by sf
+            x = x[:-(x.size(0) % sf)]
+
         assert x.size(0) % self.downsample_factor == 0, \
             'tgt_len not divisible by sf'
+
         # T x B x C
         if self.mode == 'linear':
             # T x B x C -> B x T x C
@@ -472,24 +491,25 @@ class MemTransformerLM(nn.Module):
     def init_mems(self):
         if self.mem_len > 0:
             param = next(self.parameters())
-            # We add + 1 here because we store hidden representations
-            # before first layer and after the last one
-            mems = [torch.empty(len(layer) + 1, 0, 
+            mems = []
+            for i in range(len(self.layers)):
+                layer = self.layers[i]
+                if not isinstance(layer, Upsampler) and not isinstance(layer, Downsampler):
+                    mems.append(
+                        # We add + 1 here because we store hidden representations
+                        # before first layer and after the last one
+                        torch.empty(len(layer) + 1, 0, 
                                 dtype=param.dtype, 
-                                device=param.device) 
-                                for layer in self.layers[::2]]
-            # We assume here that stacks of layers are interspearsed 
-            # with downsamplers and upsamplers
+                                device=param.device)
+                    )
             return mems
         else:
             return None
 
     def _update_mems(self, hids, mems, qlen, mlen, tgt_len, mem_len):
-        # does not deal with None
         if mems is None:
             return None
 
-        # mems is not None
         assert len(hids) == len(mems), 'len(hids) != len(mems)'
 
         # There are `mlen + qlen` steps that can be cached into mems
@@ -576,39 +596,19 @@ class MemTransformerLM(nn.Module):
 
         # Iterate over the model
         current_sf = 1
+        mems_index = 0
         new_mems = []
 
         for i in range(len(self.layers)):
             layers = self.layers[i]
-            # Based on assumption that layers using memory are  
-            # interspearsed with upsampling and downsampling layers
-            mem = mems[i // 2]
-
-            # print(f'I am at layer {i} and hiddens are of size {hidden.size()} and mems are {mem.size()}')
 
             if isinstance(layers, Upsampler):
                 # The residual come from the latest downsampler
-                hidden = layers(hidden)
-
-                assert hidden.size(0) >= residual.size(0)
-                hidden = hidden[:residual.size(0)] + residual
+                # import pdb
+                # pdb.set_trace()
+                hidden = layers(hidden, new_mems[-2][-1][:tgt_len])
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
-                # We save the state to further add it after upsampling
-                residual = hidden
-
-                # Hiddens are of shape T x B x C
-                sf = layers.downsample_factor
-    
-                if mem.numel() > 0:
-                    # import pdb; pdb.set_trace()
-                    last_mems = mem[-1]
-                    assert last_mems.size(0) > (sf - 1)
-                    hidden = torch.cat([last_mems[-(sf - 1):], hidden], dim = 0)
-                else:
-                    padding = torch.zeros((sf - 1, hidden.size(1), hidden.size(2))).to(hidden.device)
-                    hidden = torch.cat([padding, hidden], dim = 0)
-
                 # input = 123, target = 234
                 # 01 23
 
@@ -621,23 +621,23 @@ class MemTransformerLM(nn.Module):
                 # input = 567, target = 678
                 # 45 67 8
 
-                if hidden.size(0) % sf > 0:
-                    # Hack to prevent destroing the tensor when T is divisible by sf
-                    hidden = hidden[:-(hidden.size(0) % sf)]
-
-                hidden = layers(hidden)
+                hidden = layers(hidden, mems[mems_index - 1])
                 current_sf *= layers.downsample_factor
             else:
                 hidden, new_mem = self._forward(
                     hidden, 
-                    mems=mem, 
+                    mems=mems[mems_index], 
                     layers=layers,
                     tgt_len=self.tgt_len // current_sf,
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,
                 )
                 new_mems.append(new_mem)
+                mems_index += 1
 
+        if hidden.size()[:2] != target.size():
+            import pdb
+            pdb.set_trace()
         # Loss calculation
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
