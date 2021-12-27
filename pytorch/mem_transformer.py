@@ -304,7 +304,7 @@ class Upsampler(nn.Module):
         self.mode = mode
         if mode == 'linear':
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
-    
+
     def forward(self, x, residual):
         # T x B x C
         if self.mode == 'linear':
@@ -329,15 +329,15 @@ class Downsampler(nn.Module):
         self.downsample_factor = downsample_factor
         if mode == 'linear':
             self.downsample_layer = nn.Linear(
-                embedding_dim * downsample_factor, 
+                embedding_dim * downsample_factor,
                 embedding_dim
             )
         else:
             self.downsample_layer = nn.AvgPool1d(
-                kernel_size = downsample_factor, 
+                kernel_size = downsample_factor,
                 stride = downsample_factor
             )
-    
+
     def forward(self, x, mems):
         # Input is of shape T x B x C
         sf = self.downsample_factor
@@ -362,8 +362,8 @@ class Downsampler(nn.Module):
             # T x B x C -> B x T x C
             x = x.transpose(0, 1)
             x = x.reshape(
-                x.size(0), 
-                x.size(1) // self.downsample_factor, 
+                x.size(0),
+                x.size(1) // self.downsample_factor,
                 x.size(2) * self.downsample_factor
             )
             x = self.downsample_layer(x)
@@ -374,7 +374,7 @@ class Downsampler(nn.Module):
             x = self.downsample_layer(x)
             x = x.transpose(1, 2).transpose(0, 1)
 
-        return x 
+        return x
 
 
 class MemTransformerLM(nn.Module):
@@ -385,7 +385,7 @@ class MemTransformerLM(nn.Module):
                  cutoffs=[], adapt_inp=False,
                  same_length=False, attn_type=0, clamp_len=-1,
                  sample_softmax=-1,
-                 funnel_config="[3, (1, 2) ,3]", 
+                 funnel_config="[3, (1, 2) ,3]",
                  funnel_resample='naive'):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -411,7 +411,7 @@ class MemTransformerLM(nn.Module):
         self.mem_len = mem_len
         self.ext_len = ext_len
         self.max_klen = tgt_len + ext_len + mem_len
-        
+
         # It is very important shit, we don't support that
         assert self.ext_len == 0
 
@@ -436,18 +436,18 @@ class MemTransformerLM(nn.Module):
 
         self.layers = nn.ModuleList([
             create_decoder_layers(pre_layers, sf = 1),
-            Downsampler(
-                embedding_dim=d_model,
-                downsample_factor=shorten_factor,
-                mode=funnel_resample
-            ),
-            create_decoder_layers(funnel_layers, sf = shorten_factor),
-            Upsampler(
-                embedding_dim=d_model,
-                upsample_factor=shorten_factor,
-                mode=funnel_resample
-            ),
-            create_decoder_layers(post_layers, sf = 1),
+            # Downsampler(
+            #     embedding_dim=d_model,
+            #     downsample_factor=shorten_factor,
+            #     mode=funnel_resample
+            # ),
+            # create_decoder_layers(funnel_layers, sf = shorten_factor),
+            # Upsampler(
+            #     embedding_dim=d_model,
+            #     upsample_factor=shorten_factor,
+            #     mode=funnel_resample
+            # ),
+            # create_decoder_layers(post_layers, sf = 1),
         ])
 
         self.sample_softmax = sample_softmax
@@ -498,8 +498,8 @@ class MemTransformerLM(nn.Module):
                     mems.append(
                         # We add + 1 here because we store hidden representations
                         # before first layer and after the last one
-                        torch.empty(len(layer) + 1, 0, 
-                                dtype=param.dtype, 
+                        torch.empty(len(layer) + 1, 0,
+                                dtype=param.dtype,
                                 device=param.device)
                     )
             return mems
@@ -534,10 +534,10 @@ class MemTransformerLM(nn.Module):
                 new_mems = cat[:, beg_idx:end_idx].detach()
 
         return new_mems
-        
+
 
     def _forward(self, core_input, mems=None, layers = None, tgt_len = 0, mem_len = 0, clamp_len = 0):
-        qlen, bsz, _ = core_input.size()        
+        qlen, bsz, _ = core_input.size()
 
         mlen = mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
@@ -582,7 +582,7 @@ class MemTransformerLM(nn.Module):
 
     def forward(self, data, target, mems):
         if mems is None:
-            mems = self.init_mems() 
+            mems = self.init_mems()
 
         tgt_len = target.size(0)
 
@@ -625,8 +625,8 @@ class MemTransformerLM(nn.Module):
                 current_sf *= layers.downsample_factor
             else:
                 hidden, new_mem = self._forward(
-                    hidden, 
-                    mems=mems[mems_index], 
+                    hidden,
+                    mems=mems[mems_index],
                     layers=layers,
                     tgt_len=self.tgt_len // current_sf,
                     mem_len=self.mem_len // current_sf,

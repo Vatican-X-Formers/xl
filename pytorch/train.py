@@ -180,7 +180,7 @@ def parse_args():
                        help='Parameters initialized by N(0, init_std)')
     model.add_argument('--proj_init_std', type=float, default=0.01,
                        help='Parameters initialized by N(0, init_std)')
-    model.add_argument('--funnel-config', type=str, default="[4, (12, 3) ,4]", 
+    model.add_argument('--funnel-config', type=str, default="[8, (12, 1), 4]",
         help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel-resample', type=str, default='naive', help='')
 
