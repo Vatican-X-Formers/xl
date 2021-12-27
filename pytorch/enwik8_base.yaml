@@ -18,8 +18,8 @@ train: &train
   eta_min: 0.0
   warmup_step: 0
   max_step: 400000
-  tgt_len: 512
-  mem_len: 512
+  tgt_len: 768
+  mem_len: 768
   eval_tgt_len: 128
   batch_size: 24
   multi_gpu: ddp
