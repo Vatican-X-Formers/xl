@@ -848,7 +848,8 @@ def main():
 
     model = MemTransformerLM(**model_config)
 
-    print(model)
+    if args.local_rank == 0:
+        print(model)
 
     model.apply(functools.partial(weights_init, args=args))
     # ensure embedding init is not overridden by out_layer in case of weight sharing
