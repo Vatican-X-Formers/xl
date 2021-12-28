@@ -180,7 +180,7 @@ def parse_args():
                        help='Parameters initialized by N(0, init_std)')
     model.add_argument('--proj_init_std', type=float, default=0.01,
                        help='Parameters initialized by N(0, init_std)')
-    model.add_argument('--funnel-config', type=str, default="[4, (12, 3) ,4]", 
+    model.add_argument('--funnel-config', type=str, default="[4, (12, 3) ,4]",
         help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel-resample', type=str, default='naive', help='')
 
@@ -678,11 +678,11 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 best_val_loss = val_loss
                 is_best = True
 
-            if not args.debug:
-                save_checkpoint(args, model, model_config, optimizer, scheduler,
-                                scaler, vocab, epoch, batch, last_iter,
-                                train_step, best_val_loss, is_best,
-                                args.work_dir)
+            # if not args.debug:
+            #     save_checkpoint(args, model, model_config, optimizer, scheduler,
+            #                     scaler, vocab, epoch, batch, last_iter,
+            #                     train_step, best_val_loss, is_best,
+            #                     args.work_dir)
 
             # dev-performance based learning rate annealing
             if args.scheduler == 'dev_perf':
