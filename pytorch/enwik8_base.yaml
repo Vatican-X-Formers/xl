@@ -18,8 +18,8 @@ train: &train
   eta_min: 0.0
   warmup_step: 0
   max_step: 400000
-  tgt_len: 768
-  mem_len: 768
+  tgt_len: 512
+  mem_len: 512
   eval_tgt_len: 128
   batch_size: 24
   multi_gpu: ddp
@@ -27,6 +27,8 @@ train: &train
   eval_interval: 5000
   vocab: word
   adaptive: false
+  funnel_config: "[4, (12, 2) ,4]"
+  funnel_resample: naive
 
 eval: &eval
   <<: *enwik8
