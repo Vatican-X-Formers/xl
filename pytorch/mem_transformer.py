@@ -269,6 +269,7 @@ class Upsampler(nn.Module):
         self.mode = mode
         if mode == 'linear':
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
+        self.layer_norm = nn.LayerNorm(embedding_dim)
     
     def forward(self, x, residual):
         # T x B x C
@@ -285,7 +286,7 @@ class Upsampler(nn.Module):
         # The upsampled vector can be longer than tgt_len, the len from just before shortening
         x = x[:residual.size(0)] + residual
 
-        return x
+        return self.layer_norm(x)
 
 
 class Downsampler(nn.Module):
@@ -308,7 +309,7 @@ class Downsampler(nn.Module):
         # Input is of shape T x B x C
         sf = self.downsample_factor
 
-        if mems.numel() > 0:
+        if mems is not None and mems.numel() > 0:
             last_mems = mems[-1] # Outputs of the first stack of vanillas
             assert last_mems.size(0) > (sf - 1)
             x = torch.cat([last_mems[-(sf - 1):], x], dim = 0)
@@ -412,7 +413,7 @@ class MemTransformerLM(nn.Module):
             ])
         else:
             print(f'You are using funnel in config {funnel_config}')
-            assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
+            # assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
             assert funnel_resample == 'naive', 'Linear is not good for LM'
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
@@ -589,17 +590,24 @@ class MemTransformerLM(nn.Module):
                 # The residual come from just before shortening
                 # We take the last hids which are the final outputs of decoder stack before shortening
                 # We also make sure to take last tgt_len elements as these are the actual outputs
-                residual_mems_id = mems_index - 2 # -1 are hids from funnel, -2 are from before shortening
-                residual = new_mems[residual_mems_id][-1][-tgt_len:]
-                hidden = layers(hidden, residual=residual)
+                # residual_mems_id = mems_index - 2 # -1 are hids from funnel, -2 are from before shortening
+                # print('Upsampler', i)
+                # residual = new_mems[0][-1][-tgt_len:]
+                # assert torch.all(torch.eq(residual, res_lel))
+                hidden = layers(hidden, residual=residual_real)
+                # assert torch.all(torch.eq(hidden, res_lel))
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
-                hidden = layers(hidden, mems[mems_index - 1])
+                # print('Downsampler', i)
+                residual_real = hidden.clone()
+                # res_lel = hidden.clone().detach()
+                hidden = layers(hidden, mems[0] if mems is not None else None)
                 current_sf *= layers.downsample_factor
             else:
+                # print(f'Normal, len is {len(layers)}, index is {i}, current_sf is {current_sf}')
                 hidden, new_mem = self._forward(
                     hidden, 
-                    mems=mems[mems_index], 
+                    mems=mems[mems_index] if mems is not None else None, 
                     layers=layers,
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,
@@ -663,7 +671,7 @@ if __name__ == '__main__':
                                 ext_len=ext_len, mem_len=mem_len,
                                 cutoffs=cutoffs, attn_type=0,
                                 same_length=True,
-                                dtype=None, funnel_config="[1, (1, 2), 1]").to(device)
+                                dtype=None, funnel_config="[6, (0, 2), 6]").to(device)
 
     mems = None
     for idx, (inp, tgt, seqlen, _) in enumerate(diter):
