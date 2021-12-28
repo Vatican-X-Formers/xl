@@ -591,20 +591,13 @@ class MemTransformerLM(nn.Module):
                 # We take the last hids which are the final outputs of decoder stack before shortening
                 # We also make sure to take last tgt_len elements as these are the actual outputs
                 # residual_mems_id = mems_index - 2 # -1 are hids from funnel, -2 are from before shortening
-                # print('Upsampler', i)
-                # residual = new_mems[0][-1][-tgt_len:]
-                # assert torch.all(torch.eq(residual, res_lel))
-                hidden = layers(hidden, residual=residual_real)
-                # assert torch.all(torch.eq(hidden, res_lel))
+                hidden = layers(hidden, residual=residual)
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
-                # print('Downsampler', i)
-                residual_real = hidden.clone()
-                # res_lel = hidden.clone().detach()
+                residual = hidden
                 hidden = layers(hidden, mems[0] if mems is not None else None)
                 current_sf *= layers.downsample_factor
             else:
-                # print(f'Normal, len is {len(layers)}, index is {i}, current_sf is {current_sf}')
                 hidden, new_mem = self._forward(
                     hidden, 
                     mems=mems[mems_index] if mems is not None else None, 
