@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
-import pdb
 
 
 @torch.jit.script
@@ -100,12 +99,11 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         return x
 
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
-        # Dopisz wymiary wchodzących tensorów
-        # w is of size: 
-        # r is of size:
-        # biases are of size: 
-        # attn_mask is of size
-        # mems are of size: 
+        # w is of size: T x B x C
+        # r is of size: T x 1 x C
+        # biases are of size: (n_head x d_head), we add the same bias to each token
+        # attn_mask is of size (q_len x k_len)
+        # mems are of size: T x B x C
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         if mems is not None:
@@ -143,9 +141,6 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         BD = torch.einsum('ibnd,jnd->bnij', rr_head_q, r_head_k)       # bsz x n_head x qlen x klen
         BD = self._rel_shift(BD)
 
-        # Sprawdz rel_shift
-        pdb.set_trace()
-
         # [bsz x n_head x qlen x klen]
         attn_score = add_and_scale(AC, BD, self.scale)
 
@@ -155,9 +150,6 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
                 attn_score.masked_fill_(attn_mask[None, None, :, :], -float('inf'))
             elif attn_mask.dim() == 3:
                 attn_score.masked_fill_(attn_mask[:, None, :, :], -float('inf'))
-
-        # Sprawdz czy ladnie wyzerowuje
-        pdb.set_trace()
 
         # [bsz x n_head x qlen x klen]
         attn_prob = F.softmax(attn_score, dim=3)
@@ -192,11 +184,9 @@ class RelPartialLearnableDecoderLayer(nn.Module):
         self.dec_attn = RelPartialLearnableMultiHeadAttn(n_head, d_model,
                                                          d_head, dropout,
                                                          **kwargs)
-        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout,
-                                     pre_lnorm=kwargs.get('pre_lnorm'))
+        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, pre_lnorm=kwargs.get('pre_lnorm'))
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
-
         output = self.dec_attn(dec_inp, r, r_w_bias, r_r_bias,
                                attn_mask=dec_attn_mask,
                                mems=mems)
@@ -206,6 +196,10 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
 
 class AdaptiveEmbedding(nn.Module):
+    # Just more fancy embedding layer
+    # It exploits the fact that there exists tokens of different frequence in vocabulary
+    # It splits vocab into different subparts based on frequency and it assigns different dimensions to them
+    # Lesser frequency of occurence gets lower dimensional vector to train
     def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1,
                  sample_softmax=False):
         super(AdaptiveEmbedding, self).__init__()
@@ -288,6 +282,7 @@ class Upsampler(nn.Module):
             x = x.repeat_interleave(self.upsample_factor, dim=0)
 
         assert x.size(0) >= residual.size(0)
+        # The upsampled vector can be longer than tgt_len, the len from just before shortening
         x = x[:residual.size(0)] + residual
 
         return x
@@ -358,6 +353,13 @@ class MemTransformerLM(nn.Module):
                  sample_softmax=-1,
                  funnel_config="[3, (1, 2) ,3]", 
                  funnel_resample='naive'):
+        # TODO: The loss is crazy fucking big, maybe do some better initialization?
+        # Let's try initialization using xavier uniform, maybe something like in 
+        # wav2vec2 from fairseq or Transformer LS
+        # TODO: W train.py jest funkcja init_weights, ale wyprintuj ją zeby sprawdzic
+        # czy ona się rzeczywiście uruchamia i inicjalizuje poprawnie wszystkie klasy
+        # TODO: Przejdz przez model i zastanow sie czy warto wjebac jakies ln
+        # Aczkolwiek robiłem to juz wiele razy w implementacji traxa i to jest raczej std
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -381,7 +383,6 @@ class MemTransformerLM(nn.Module):
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
-        self.max_klen = tgt_len + ext_len + mem_len
         
         # It is very important shit, we don't support that
         assert self.ext_len == 0
@@ -404,22 +405,30 @@ class MemTransformerLM(nn.Module):
                     'Now we only support two upsampling/downsampling methods'
         assert mem_len % shorten_factor == 0 and tgt_len % shorten_factor == 0, \
                     'Keep lengths divisible by sf'
-
-        self.layers = nn.ModuleList([
-            create_decoder_layers(pre_layers),
-            Downsampler(
-                embedding_dim=d_model,
-                downsample_factor=shorten_factor,
-                mode=funnel_resample
-            ),
-            create_decoder_layers(funnel_layers),
-            Upsampler(
-                embedding_dim=d_model,
-                upsample_factor=shorten_factor,
-                mode=funnel_resample
-            ),
-            create_decoder_layers(post_layers),
-        ])
+        if post_layers == 0 and funnel_layers == 0 and shorten_factor == 1:
+            print('You are not using funnel')
+            self.layers = nn.ModuleList([
+                create_decoder_layers(pre_layers)
+            ])
+        else:
+            print(f'You are using funnel in config {funnel_config}')
+            assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
+            assert funnel_resample == 'naive', 'Linear is not good for LM'
+            self.layers = nn.ModuleList([
+                create_decoder_layers(pre_layers),
+                Downsampler(
+                    embedding_dim=d_model,
+                    downsample_factor=shorten_factor,
+                    mode=funnel_resample
+                ),
+                create_decoder_layers(funnel_layers),
+                Upsampler(
+                    embedding_dim=d_model,
+                    upsample_factor=shorten_factor,
+                    mode=funnel_resample
+                ),
+                create_decoder_layers(post_layers),
+            ])
 
         self.sample_softmax = sample_softmax
         assert sample_softmax <= 0
@@ -440,12 +449,10 @@ class MemTransformerLM(nn.Module):
         self.same_length = same_length
         self.clamp_len = clamp_len
 
-        self._create_params()
-
-    def _create_params(self):
+        # Relative attention specific parameters
         self.pos_emb = PositionalEmbedding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
-        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
+        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())        
 
     def reset_length(self, tgt_len, ext_len, mem_len):
         if tgt_len < 1:
@@ -477,41 +484,36 @@ class MemTransformerLM(nn.Module):
         else:
             return None
 
-    def _update_mems(self, hids, mems, qlen, mlen, tgt_len, mem_len):
+    def _update_mems(self, hids, mems, qlen, mlen, mem_len):
         if mems is None:
             return None
 
         assert len(hids) == len(mems), 'len(hids) != len(mems)'
 
-        # There are `mlen + qlen` steps that can be cached into mems
-        # For the next step, the last `ext_len` of the `qlen` tokens
-        # will be used as the extended context. Hence, we only cache
-        # the tokens from `mlen + qlen - self.ext_len - self.mem_len`
-        # to `mlen + qlen - self.ext_len`.
         with torch.no_grad():
-            stacked = torch.stack(hids)
-            if (
-                mem_len == tgt_len
-                and stacked.size(1) == mem_len
-            ):
-                new_mems = stacked.detach()
+            # The hids are of shape N_Layers x T x B x C
+            stacked_hids = torch.stack(hids, dim = 0)
+            if stacked_hids.size(1) == mem_len:
+                new_mems = stacked_hids.detach()
             else:
                 end_idx = mlen + qlen
                 beg_idx = max(0, end_idx - mem_len)
-                if mems.numel():
-                    cat = torch.cat([mems, stacked], dim=1)
+                if mems.numel() > 0: # If mems contains any elements
+                    concat_mems_hids = torch.cat([mems, stacked_hids], dim=1)
                 else:
-                    cat = stacked
-                new_mems = cat[:, beg_idx:end_idx].detach()
+                    concat_mems_hids = stacked_hids
+                new_mems = concat_mems_hids[:, beg_idx:end_idx].detach()
 
         return new_mems
         
 
-    def _forward(self, core_input, mems=None, layers = None, tgt_len = 0, mem_len = 0, clamp_len = 0):
-        qlen, bsz, _ = core_input.size()        
-
+    def _forward(self, core_input, mems=None, layers = None, mem_len = 0, clamp_len = 0):
+        # Core_input is of size (T x B x C)
+        # Mems is of size (N_layers x T x B x C)
+        qlen, _, _ = core_input.size()
         mlen = mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
+
         if self.same_length:
             all_ones = core_input.new_ones(qlen, klen)
             mask_len = klen - mem_len - 1
@@ -525,10 +527,14 @@ class MemTransformerLM(nn.Module):
             dec_attn_mask = torch.triu(
                 core_input.new_ones(qlen, klen), diagonal=1+mlen).bool()
 
-        hids = []
+        # After shift I get positive distance between token of interest and token to the left
+        # We don't care about tokens to the right because we cannot look into future
         pos_seq = torch.arange(klen-1, -1, -1.0, device=core_input.device,
                                 dtype=core_input.dtype)
 
+        # This is used only during inference, as during inference we use
+        # quite longer sequences than during training as we don't have to store activations
+        # Difference is somewhere in between 1k during training vs 2k during eval
         if clamp_len > 0:
             pos_seq.clamp_(max=clamp_len)
 
@@ -536,45 +542,56 @@ class MemTransformerLM(nn.Module):
         pos_emb = self.drop(pos_emb)
 
         core_out = core_input
+        hids = []
 
         for i, layer in enumerate(layers):
             hids.append(core_out.detach())
+            # Mems are none when mem_len is set to 0, we want to keep this possibility
             mems_i = None if mems is None else mems[i]
-            core_out = layer(core_out, pos_emb, self.r_w_bias,
-                                self.r_r_bias, dec_attn_mask=dec_attn_mask,
-                                mems=mems_i)
+            core_out = layer(
+                core_out, pos_emb, self.r_w_bias, self.r_r_bias, 
+                dec_attn_mask=dec_attn_mask, mems=mems_i
+            )
 
+        # We also want to store the output of last layer in memory
         hids.append(core_out.detach())
-        new_mems = self._update_mems(hids, mems, qlen, mlen, tgt_len, mem_len)
+        new_mems = self._update_mems(hids, mems, qlen, mlen, mem_len)
 
         return core_out, new_mems
 
 
     def forward(self, data, target, mems):
+        # Data and target are of size T x B
         if mems is None:
             mems = self.init_mems() 
 
+        # Data loader serves most batches of length args.tgt_len but
+        # the last batch could be leftover and could be shorter
+        # therefore we use actual length of a batch and not args.tgt_len
         tgt_len = target.size(0)
 
         # Token_ids to vector embeddings
-        dec_inp = data
-        word_emb = self.word_emb(dec_inp)
+        word_emb = self.word_emb(data) # T x B x C
         hidden = self.drop(word_emb)
 
         # We don't do shift right because of the input/target structure
         # The target given to us is already shifted by one so we don't shift
 
         # Iterate over the model
-        current_sf = 1
-        mems_index = 0
-        new_mems = []
+        current_sf = 1 # We keep that to regulate mem_len and clamp_len in shortened layers
+        mems_index = 0 # It points to current/next stack of Transformer layers for which we need mems
+        new_mems = [] # Here we keep outputs and mems for the next steps, we also take residual from here
 
         for i in range(len(self.layers)):
             layers = self.layers[i]
 
             if isinstance(layers, Upsampler):
-                # The residual come from the latest downsampler
-                hidden = layers(hidden, residual=new_mems[-2][-1][-tgt_len:])
+                # The residual come from just before shortening
+                # We take the last hids which are the final outputs of decoder stack before shortening
+                # We also make sure to take last tgt_len elements as these are the actual outputs
+                residual_mems_id = mems_index - 2 # -1 are hids from funnel, -2 are from before shortening
+                residual = new_mems[residual_mems_id][-1][-tgt_len:]
+                hidden = layers(hidden, residual=residual)
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
                 hidden = layers(hidden, mems[mems_index - 1])
@@ -584,16 +601,17 @@ class MemTransformerLM(nn.Module):
                     hidden, 
                     mems=mems[mems_index], 
                     layers=layers,
-                    tgt_len=self.tgt_len // current_sf,
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,
                 )
                 new_mems.append(new_mem)
                 mems_index += 1
 
+        hidden = self.drop(hidden) # Final dropout
 
-        hidden = self.drop(hidden)
-        # Loss calculation
+        # Loss calculation, Negative log likelihood
+        # What we do here is we calculate -log(softmax) over vocab
+        # Then take the value corresponding only to our target
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
 
@@ -621,7 +639,7 @@ if __name__ == '__main__':
     device = torch.device("cuda" if args.cuda else "cpu")
 
     B = 3
-    tgt_len, mem_len, ext_len = 2, 4, 0
+    tgt_len, mem_len, ext_len = 4, 12, 0
     data_len = tgt_len * 20
     args.n_token = 10000
 
@@ -633,18 +651,20 @@ if __name__ == '__main__':
     cutoffs = [args.n_token // 2]
     tie_projs = [False] + [True] * len(cutoffs)
 
-    for div_val in [1, 2]:
-        for d_embed in [200, 100]:
-            model = MemTransformerLM(args.n_token, args.n_layer, args.n_head,
-                                     args.d_model, args.d_head, args.d_inner,
-                                     args.dropout, dropatt=args.dropout,
-                                     tie_weight=True, d_embed=d_embed,
-                                     div_val=div_val, tie_projs=tie_projs,
-                                     pre_lnorm=True, tgt_len=tgt_len,
-                                     ext_len=ext_len, mem_len=mem_len,
-                                     cutoffs=cutoffs, attn_type=0,
-                                     dtype=None, funnel_config="[4, (4, 2), 4]").to(device)
+    div_val = 2
+    d_embed = 100
 
-            mems = None
-            for idx, (inp, tgt, seqlen, _) in enumerate(diter):
-                _, mems = model(inp, tgt, mems)
+    model = MemTransformerLM(args.n_token, args.n_layer, args.n_head,
+                                args.d_model, args.d_head, args.d_inner,
+                                args.dropout, dropatt=args.dropout,
+                                tie_weight=True, d_embed=d_embed,
+                                div_val=div_val, tie_projs=tie_projs,
+                                pre_lnorm=True, tgt_len=tgt_len,
+                                ext_len=ext_len, mem_len=mem_len,
+                                cutoffs=cutoffs, attn_type=0,
+                                same_length=True,
+                                dtype=None, funnel_config="[1, (1, 2), 1]").to(device)
+
+    mems = None
+    for idx, (inp, tgt, seqlen, _) in enumerate(diter):
+        _, mems = model(inp, tgt, mems)
