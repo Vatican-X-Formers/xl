@@ -269,7 +269,6 @@ class Upsampler(nn.Module):
         self.mode = mode
         if mode == 'linear':
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
-        self.layer_norm = nn.LayerNorm(embedding_dim)
     
     def forward(self, x, residual):
         # T x B x C
@@ -286,7 +285,7 @@ class Upsampler(nn.Module):
         # The upsampled vector can be longer than tgt_len, the len from just before shortening
         x = x[:residual.size(0)] + residual
 
-        return self.layer_norm(x)
+        return x
 
 
 class Downsampler(nn.Module):
@@ -390,6 +389,10 @@ class MemTransformerLM(nn.Module):
 
         self.attn_type = attn_type
 
+        self.layer_norms = nn.ModuleList([
+            nn.LayerNorm(d_model) for _ in range(3)
+        ])
+
         def create_decoder_layers(n_layers):
             layers = nn.ModuleList([
                 RelPartialLearnableDecoderLayer(
@@ -401,6 +404,7 @@ class MemTransformerLM(nn.Module):
 
             return layers
 
+        assert pre_lnorm == True, 'We mimic Trax setup with pre_lnorm'
         pre_layers, (funnel_layers, shorten_factor), post_layers = eval(funnel_config)
         assert funnel_resample in ['linear', 'naive'], \
                     'Now we only support two upsampling/downsampling methods'
@@ -413,7 +417,7 @@ class MemTransformerLM(nn.Module):
             ])
         else:
             print(f'You are using funnel in config {funnel_config}')
-            # assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
+            assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
             assert funnel_resample == 'naive', 'Linear is not good for LM'
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
@@ -475,9 +479,7 @@ class MemTransformerLM(nn.Module):
                 layer = self.layers[i]
                 if not isinstance(layer, Upsampler) and not isinstance(layer, Downsampler):
                     mems.append(
-                        # We add + 1 here because we store hidden representations
-                        # before first layer and after the last one
-                        torch.empty(len(layer) + 1, 0, 
+                        torch.empty(len(layer), 0, 
                                 dtype=param.dtype, 
                                 device=param.device)
                     )
@@ -555,7 +557,7 @@ class MemTransformerLM(nn.Module):
             )
 
         # We also want to store the output of last layer in memory
-        hids.append(core_out.detach())
+        # hids.append(core_out.detach())
         new_mems = self._update_mems(hids, mems, qlen, mlen, mem_len)
 
         return core_out, new_mems
@@ -605,10 +607,12 @@ class MemTransformerLM(nn.Module):
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,
                 )
+                hidden = self.layer_norms[mems_index](hidden)
                 new_mems.append(new_mem)
                 mems_index += 1
 
-        hidden = self.drop(hidden) # Final dropout
+        # We comment this out, there is no such thing in Trax
+        # hidden = self.drop(hidden) # Final dropout
 
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
@@ -664,7 +668,7 @@ if __name__ == '__main__':
                                 ext_len=ext_len, mem_len=mem_len,
                                 cutoffs=cutoffs, attn_type=0,
                                 same_length=True,
-                                dtype=None, funnel_config="[6, (0, 2), 6]").to(device)
+                                dtype=None, funnel_config="[6, (1, 2), 6]").to(device)
 
     mems = None
     for idx, (inp, tgt, seqlen, _) in enumerate(diter):
