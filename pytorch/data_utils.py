@@ -73,7 +73,7 @@ class LMOrderedIterator(object):
         # I say that my batch_size is 10 and target_len is 60
         # So I expect mini_batches of size (10, 60)
         # Normally I could just divide 6k into chunks of 60 and then feed it to batcher
-        # But then I wouldn't use memory at all because I would 
+        # But then I wouldn't use memory at all because I would
         # be processing consecutive elems in the same batch
         # The solution here is to divide data onto batches
         # So we get very big stripes at next batches if not shuffled would depened on previos one
@@ -81,7 +81,7 @@ class LMOrderedIterator(object):
 
         # Robią jakieś kilka batchy warm-up'u
         # Nie robią shift right w tym modelu, shift right jest robiony przy podawaniu danych
-        # Co to znaczy, znaczy to to, ze target jest przesuniety o jeden w prawo i jest 
+        # Co to znaczy, znaczy to to, ze target jest przesuniety o jeden w prawo i jest
         # Zapewnienione ze target zawsze istnieje. Bierzemy input dla ktorego znamy kolejny znak,
         # Więc target zawsze istnieje. Będę musiał dostosować funnel'a pod te specyfikacje zadania
 
@@ -337,9 +337,9 @@ def get_lm_corpus(datadir, dataset, vocab):
             pass
 
         corpus = Corpus(datadir, dataset, vocab, **kwargs)
-        with utils.distributed.sync_workers() as rank:
-            if rank == 0:
-                torch.save(corpus, fn)
+        # with utils.distributed.sync_workers() as rank:
+        #     if rank == 0:
+        #         torch.save(corpus, fn)
 
     return corpus
 
