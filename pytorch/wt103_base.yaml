@@ -28,7 +28,7 @@ train: &train
    eval_interval: 5000
    vocab: word
    adaptive: true
-   funnel_config: "[6, (6, 3) ,6]"
+   funnel_config: "[16, (0, 1) ,0]"
    funnel_resample: naive
 
 
