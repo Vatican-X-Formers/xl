@@ -872,6 +872,17 @@ def main():
             optimizer = optim.Adam(model.parameters(), lr=args.lr,
                                    weight_decay=args.weight_decay)
             optimizer_sparse = None
+    elif args.optim.lower() == 'adagrad':
+        optimizer = optim.Adagrad(model.parameters(), lr=args.lr)
+        optimizer_sparse = None
+    elif args.optim.lower() == 'lamb':
+        optimizer = lamb.Lamb(model.parameters(), lr=args.lr,
+                              weight_decay=args.weight_decay)
+        optimizer_sparse = None
+    elif args.optim.lower() == 'jitlamb':
+        optimizer = lamb.JITLamb(model.parameters(), lr=args.lr,
+                                 weight_decay=args.weight_decay)
+        optimizer_sparse = None
     else:
         raise NotImplementedError
 
