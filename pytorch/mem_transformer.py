@@ -370,8 +370,8 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        # self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, div_val=div_val)
-        self.word_emb = nn.Embedding(n_token, d_model)
+        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, div_val=div_val)
+        # self.word_emb = nn.Embedding(n_token, d_model)
         self.drop = nn.Dropout(dropout)
 
         # Relative attention specific parameters
@@ -443,21 +443,21 @@ class MemTransformerLM(nn.Module):
         self.sample_softmax = sample_softmax
         assert sample_softmax <= 0
 
-        # if tie_weight:
-        #     emb_layers = [i.weight for i in self.word_emb.emb_layers]
-        # else:
-        #     emb_layers = None
+        if tie_weight:
+            emb_layers = [i.weight for i in self.word_emb.emb_layers]
+        else:
+            emb_layers = None
 
-        # emb_projs = self.word_emb.emb_projs
+        emb_projs = self.word_emb.emb_projs
 
-        # self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-        #                                         cutoffs, div_val=div_val,
-        #                                         tie_projs=tie_projs,
-        #                                         out_projs=emb_projs,
-        #                                         out_layers_weights=emb_layers)
+        self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
+                                                cutoffs, div_val=div_val,
+                                                tie_projs=tie_projs,
+                                                out_projs=emb_projs,
+                                                out_layers_weights=emb_layers)
 
-        self.final_cast = nn.Linear(d_model, n_token)
-        self.crit = torch.nn.CrossEntropyLoss(reduction='none')
+        # self.final_cast = nn.Linear(d_model, n_token)
+        # self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
         self.clamp_len = clamp_len       
