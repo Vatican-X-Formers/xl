@@ -702,6 +702,10 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
 
 def main():
+<<<<<<< HEAD
+=======
+    run = neptune.init('syzymon/hourglass-pytorch')
+>>>>>>> x
     args = parse_args()
     if args.affinity != 'disabled':
         nproc_per_node = torch.cuda.device_count()
