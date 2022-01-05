@@ -702,10 +702,6 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
 
 def main():
-<<<<<<< HEAD
-=======
-    run = neptune.init('syzymon/hourglass-pytorch')
->>>>>>> x
     args = parse_args()
     if args.affinity != 'disabled':
         nproc_per_node = torch.cuda.device_count()
@@ -846,6 +842,7 @@ def main():
         run = neptune.init('syzymon/hourglass-pytorch')
         run['model_config'] = model_config
         run['args'] = vars(args)
+        run['branch'] = os.getenv('TRAX_BRANCH')
 
     model = MemTransformerLM(**model_config)
 
