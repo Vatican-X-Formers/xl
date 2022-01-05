@@ -6,28 +6,28 @@ enwik8: &enwik8
 train: &train
   <<: *enwik8
   cuda: true
-  n_layer: 12
+  n_layer: 0
   d_model: 512
   n_head: 8
   d_head: 64
   d_inner: 2048
   dropout: 0.15
-  dropatt: 0.0
+  dropatt: 0.15
   optim: adam
-  lr: 0.0004
+  lr: 0.00041
   eta_min: 0.0
   warmup_step: 4000
-  max_step: 350000
+  max_step: 200000
   tgt_len: 2049
   mem_len: 0
-  eval_tgt_len: 128
+  eval_tgt_len: 2049
   batch_size: 8
   multi_gpu: ddp
   log_interval: 100
   eval_interval: 5000
   vocab: word
   adaptive: false
-  funnel_config: "[11, (0, 1) ,0]"
+  funnel_config: "[2, (8, 3) ,2]"
   funnel_resample: naive
   pre_lnorm: true 
 
