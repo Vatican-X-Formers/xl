@@ -54,7 +54,8 @@ class PositionwiseFF(nn.Module):
         self.dropout = dropout
 
         self.CoreNet = nn.Sequential(
-            nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_inner), 
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
             nn.Dropout(dropout),
