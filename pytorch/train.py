@@ -780,7 +780,8 @@ def main():
     # Load data
     ###########################################################################
     corpus = get_lm_corpus(args.data, args.dataset, args.vocab)
-    ntokens = len(corpus.vocab)
+    # ntokens = len(corpus.vocab)
+    ntokens = 256
     vocab = corpus.vocab
     args.n_token = ntokens
 
