@@ -620,7 +620,7 @@ class MemTransformerLM(nn.Module):
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
-        hidden = self.final_cast(hidden)
+        # hidden = self.final_cast(hidden)
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
 
