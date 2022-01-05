@@ -843,6 +843,7 @@ def main():
         run = neptune.init('syzymon/hourglass-pytorch')
         run['model_config'] = model_config
         run['args'] = vars(args)
+        run['branch'] = os.getenv('TRAX_BRANCH')
 
     model = MemTransformerLM(**model_config)
 
