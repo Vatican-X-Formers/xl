@@ -199,8 +199,6 @@ def parse_args():
                      help='Max number of training steps for LR scheduler')
     opt.add_argument('--warmup_step', type=int, default=1000,
                      help='Number of iterations for LR warmup')
-    opt.add_argument('--decay_rate', type=float, default=0.5,
-                     help='Decay factor when ReduceLROnPlateau is used')
     opt.add_argument('--lr_min', type=float, default=0.0,
                      help='Minimum learning rate during annealing')
     opt.add_argument('--clip', type=float, default=0.25,

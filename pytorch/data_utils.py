@@ -66,7 +66,6 @@ class LMOrderedIterator(object):
 
         # Number of mini-batches
         self.n_batch = (self.data.size(0) + self.bptt - 1) // self.bptt
-        # print('tumple', self.data.size(), self.bptt, self.n_batch)
 
         # So how this shit work
         # I start with the stream of tokens, lets say 6k tokens

@@ -74,12 +74,12 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
-        self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
+        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head)
+        self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+        self.o_net = nn.Linear(n_head * d_head, d_model)
 
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -267,6 +267,7 @@ class Upsampler(nn.Module):
         super().__init__()
         self.upsample_factor = upsample_factor
         self.mode = mode
+        self.ln = nn.LayerNorm(embedding_dim)
         if mode == 'linear':
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
     
@@ -283,7 +284,7 @@ class Upsampler(nn.Module):
 
         assert x.size(0) >= residual.size(0)
         # The upsampled vector can be longer than tgt_len, the len from just before shortening
-        x = x[:residual.size(0)] + residual
+        x = self.ln(x[:residual.size(0)]) + residual
 
         return x
 
@@ -369,10 +370,14 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs,
-                                          div_val=div_val)
-
+        # self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, div_val=div_val)
+        self.word_emb = nn.Embedding(n_token, d_model)
         self.drop = nn.Dropout(dropout)
+
+        # Relative attention specific parameters
+        self.pos_emb = PositionalEmbedding(self.d_model)
+        self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
+        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_()) 
 
         self.tie_weight = tie_weight
         self.tie_projs = tie_projs
@@ -438,26 +443,24 @@ class MemTransformerLM(nn.Module):
         self.sample_softmax = sample_softmax
         assert sample_softmax <= 0
 
-        if tie_weight:
-            emb_layers = [i.weight for i in self.word_emb.emb_layers]
-        else:
-            emb_layers = None
+        # if tie_weight:
+        #     emb_layers = [i.weight for i in self.word_emb.emb_layers]
+        # else:
+        #     emb_layers = None
 
-        emb_projs = self.word_emb.emb_projs
+        # emb_projs = self.word_emb.emb_projs
 
-        self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-                                                cutoffs, div_val=div_val,
-                                                tie_projs=tie_projs,
-                                                out_projs=emb_projs,
-                                                out_layers_weights=emb_layers)
+        # self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
+        #                                         cutoffs, div_val=div_val,
+        #                                         tie_projs=tie_projs,
+        #                                         out_projs=emb_projs,
+        #                                         out_layers_weights=emb_layers)
+
+        self.final_cast = nn.Linear(d_model, n_token)
+        self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
-        self.clamp_len = clamp_len
-
-        # Relative attention specific parameters
-        self.pos_emb = PositionalEmbedding(self.d_model)
-        self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
-        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())        
+        self.clamp_len = clamp_len       
 
     def reset_length(self, tgt_len, ext_len, mem_len):
         if tgt_len < 1:
@@ -617,6 +620,7 @@ class MemTransformerLM(nn.Module):
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
+        hidden = self.final_cast(hidden)
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
 
