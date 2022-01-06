@@ -361,59 +361,31 @@ def load_checkpoint(path):
     return checkpoint
 
 
-def init_weight(weight, args):
-    if args.init == 'uniform':
-        nn.init.uniform_(weight, -args.init_range, args.init_range)
-    elif args.init == 'normal':
-        nn.init.normal_(weight, 0.0, args.init_std)
-
-
-def init_bias(bias):
-    nn.init.constant_(bias, 0.0)
-
-
 def weights_init(m, args):
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
         if hasattr(m, 'weight') and m.weight is not None:
-            init_weight(m.weight, args)
+            nn.init.xavier_uniform_(m.weight)
         if hasattr(m, 'bias') and m.bias is not None:
-            init_bias(m.bias)
+            torch.nn.init.normal_(m.bias, mean=0.0, std=1e-6)
     elif classname.find('AdaptiveEmbedding') != -1:
-        if hasattr(m, 'emb_projs'):
-            for i in range(len(m.emb_projs)):
-                if m.emb_projs[i] is not None:
-                    nn.init.normal_(m.emb_projs[i], 0.0, args.proj_init_std)
+        raise NotImplementedError
     elif classname.find('Embedding') != -1:
         if hasattr(m, 'weight'):
-            init_weight(m.weight, args)
+            lim = (3 * (1 / args.d_model)) ** (1/2)
+            torch.nn.init.uniform(m.weight, a = -lim, b = lim)
     elif classname.find('ProjectedAdaptiveLogSoftmax') != -1:
-        if hasattr(m, 'cluster_weight') and m.cluster_weight is not None:
-            init_weight(m.cluster_weight, args)
-        if hasattr(m, 'cluster_bias') and m.cluster_bias is not None:
-            init_bias(m.cluster_bias)
-        if hasattr(m, 'out_projs'):
-            for i in range(len(m.out_projs)):
-                if m.out_projs[i] is not None:
-                    nn.init.normal_(m.out_projs[i], 0.0, args.proj_init_std)
-        if hasattr(m, 'out_layers_weights'):
-            for i in range(len(m.out_layers_weights)):
-                if m.out_layers_weights[i] is not None:
-                    init_weight(m.out_layers_weights[i], args)
+        raise NotImplementedError
     elif classname.find('LayerNorm') != -1:
         if hasattr(m, 'weight'):
-            nn.init.normal_(m.weight, 1.0, args.init_std)
+            nn.init.constant_(m.weight, 1.0)
         if hasattr(m, 'bias') and m.bias is not None:
-            init_bias(m.bias)
+            nn.init.constant_(m.bias, 0.0)
     elif classname.find('TransformerLM') != -1:
-        if hasattr(m, 'r_emb'):
-            init_weight(m.r_emb, args)
         if hasattr(m, 'r_w_bias'):
-            init_weight(m.r_w_bias, args)
+            torch.nn.init.normal_(m.r_w_bias, mean=0.0, std=1e-6)
         if hasattr(m, 'r_r_bias'):
-            init_weight(m.r_r_bias, args)
-        if hasattr(m, 'r_bias'):
-            init_bias(m.r_bias)
+            torch.nn.init.normal_(m.r_r_bias, mean=0.0, std=1e-6)
 
 
 def update_dropout(m, args):
