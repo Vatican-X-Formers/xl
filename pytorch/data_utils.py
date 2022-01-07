@@ -281,11 +281,11 @@ class Corpus(object):
                 os.path.join(path, 'test.txt'), ordered=True)
         elif self.dataset in ['enwik8', 'text8']:
             self.train = self.vocab.encode_file(
-                os.path.join(path, 'train.txt'), ordered=True, add_eos=False)
+                os.path.join(path, 'train.txt'), ordered=True, add_eos=True)
             self.valid = self.vocab.encode_file(
-                os.path.join(path, 'valid.txt'), ordered=True, add_eos=False)
+                os.path.join(path, 'valid.txt'), ordered=True, add_eos=True)
             self.test = self.vocab.encode_file(
-                os.path.join(path, 'test.txt'), ordered=True, add_eos=False)
+                os.path.join(path, 'test.txt'), ordered=True, add_eos=True)
         elif self.dataset == 'lm1b':
             self.train = train_paths
             self.valid = self.vocab.encode_file(
