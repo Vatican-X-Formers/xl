@@ -123,7 +123,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         else:
             if self.pre_lnorm:
                 w_head_q, w_head_k, w_head_v = \
-                    map(lambda layer: layer(w), [self.q_net, self.k_net, self.v_net])
+                    map(lambda layer: layer(self.layer_norm(w)), [self.q_net, self.k_net, self.v_net])
             else:
                 w_head_q, w_head_k, w_head_v = \
                     map(lambda layer: layer(w), [self.q_net, self.k_net, self.v_net])

@@ -42,10 +42,6 @@ class LMOrderedIterator(object):
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = data.size(0) // bsz
 
-        # print('in data iterator')
-        # print(len(data))
-        # print(data.size())
-
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         data = data[:n_step * bsz]
 
@@ -124,9 +120,15 @@ class LMOrderedIterator(object):
     def get_fixlen_iter(self, start=0):
         if start != 0:
             start += self.bptt
+        # batches = []
         for i in range(start, self.data.size(0) - 1, self.bptt):
             self.last_iter = i
             yield self.get_batch(i)
+        #     batches.append(self.get_batch(i))
+        # import random
+        # random.shuffle(batches)
+        # for batch in batches:
+        #     yield batch
 
     def __iter__(self):
         return self.get_fixlen_iter()

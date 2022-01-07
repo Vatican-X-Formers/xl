@@ -205,8 +205,6 @@ def parse_args():
                      help='Gradient clipping')
     opt.add_argument('--weight_decay', type=float, default=0.0,
                      help='Weight decay for adam|lamb')
-    opt.add_argument('--clip_nonemb', action='store_true',
-                     help='Only clip the gradient of non-embedding params')
     opt.add_argument('--patience', type=int, default=0,
                      help='Patience')
     opt.add_argument('--eta_min', type=float, default=0.001,
@@ -367,13 +365,13 @@ def weights_init(m, args):
         if hasattr(m, 'weight') and m.weight is not None:
             nn.init.xavier_uniform_(m.weight)
         if hasattr(m, 'bias') and m.bias is not None:
-            torch.nn.init.normal_(m.bias, mean=0.0, std=1e-6)
+            nn.init.normal_(m.bias, mean=0.0, std=1e-6)
     elif classname.find('AdaptiveEmbedding') != -1:
         raise NotImplementedError
     elif classname.find('Embedding') != -1:
         if hasattr(m, 'weight'):
             lim = (3 * (1 / args.d_model)) ** (1/2)
-            torch.nn.init.uniform(m.weight, a = -lim, b = lim)
+            nn.init.uniform_(m.weight, a = -lim, b = lim)
     elif classname.find('ProjectedAdaptiveLogSoftmax') != -1:
         raise NotImplementedError
     elif classname.find('LayerNorm') != -1:
@@ -487,6 +485,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     target_tokens = 0
     log_step = 0
     log_start_time = time.time()
+    l2_grad_norm_agg = 0
 
     mems = [None for _ in range(args.batch_chunk)]
     train_iter = tr_iter.get_fixlen_iter(start=last_iter)
@@ -516,14 +515,14 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
             train_loss += train_loss_chunk
 
-        if args.fp16:
-            if args.amp == 'pytorch':
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            elif args.amp == 'apex':
-                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
-        else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        # if args.fp16:
+        #     if args.amp == 'pytorch':
+        #         scaler.unscale_(optimizer)
+        #         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        #     elif args.amp == 'apex':
+        #         torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
+        # else:
+        #     torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
         if args.fp16 and args.amp == 'pytorch':
             scaler.step(optimizer)
@@ -552,7 +551,12 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             if scheduler_sparse:
                 scheduler_sparse.step(train_step)
 
-        if train_step % args.log_interval == 0:
+        l2_params_norm = sum(p.detach().pow(2.0).sum() for p in model.parameters()) ** 0.5
+        l2_grad_norm = sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5
+
+        l2_grad_norm_agg += l2_grad_norm
+
+        if train_step % args.log_interval == 0 or train_step == 1:
             cur_loss = train_loss / log_step
             cur_loss = utils.distributed.all_reduce_item(cur_loss, op='mean')
             train_loss = 0
@@ -585,6 +589,10 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 run['lr'].log(lr, step=train_step)
                 run['train/loss'].log(cur_loss, step=train_step)
                 run['tokens_per_sec'].log(throughput, step=train_step)
+                run['l2_params_norm'].log(l2_params_norm, step=train_step)
+                run['l2_grad_norm'].log(l2_grad_norm_agg / (args.log_interval if train_step != 1 else 1), step=train_step)
+
+            l2_grad_norm_agg = 0
 
             dllogger_data = {
                 'epoch': epoch,
@@ -824,10 +832,10 @@ def main():
 
     model.apply(functools.partial(weights_init, args=args))
     # ensure embedding init is not overridden by out_layer in case of weight sharing
-    model.word_emb.apply(functools.partial(weights_init, args=args))
+    # model.word_emb.apply(functools.partial(weights_init, args=args))
 
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
-    args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
+    # args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
 
     # optimizer
     if args.optim.lower() == 'sgd':
@@ -893,7 +901,7 @@ def main():
         logging.info('    - {} : {}'.format(k, v))
     logging.info('=' * 100)
     logging.info('#params = {}'.format(args.n_all_param))
-    logging.info('#non emb params = {}'.format(args.n_nonemb_param))
+    # logging.info('#non emb params = {}'.format(args.n_nonemb_param))
 
     train_step = 0
     start_epoch = 1
