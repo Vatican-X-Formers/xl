@@ -38,7 +38,7 @@ class PositionwiseFF(nn.Module):
 
         self.CoreNet = nn.Sequential(
             nn.Linear(d_model, d_inner), 
-            nn.ReLU(inplace=True),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
             nn.Dropout(dropout),
@@ -74,7 +74,9 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head)
+        self.q_net = nn.Linear(d_model, n_head * d_head)
+        self.k_net = nn.Linear(d_model, n_head * d_head)
+        self.v_net = nn.Linear(d_model, n_head * d_head)
         self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head)
 
         self.drop = nn.Dropout(dropout)
@@ -109,21 +111,23 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         if mems is not None:
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                w_heads = self.qkv_net(self.layer_norm(cat))
+                cat = self.layer_norm(cat)
+                w_head_q, w_head_k, w_head_v = \
+                    map(lambda layer: layer(cat), [self.q_net, self.k_net, self.v_net])
             else:
-                w_heads = self.qkv_net(cat)
+                w_head_q, w_head_k, w_head_v = \
+                    map(lambda layer: layer(cat), [self.q_net, self.k_net, self.v_net])
             r_head_k = self.r_net(r)
 
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
-            w_head_q = w_head_q[-qlen:]
+            assert w_head_q.size(0) == qlen
         else:
             if self.pre_lnorm:
-                w_heads = self.qkv_net(self.layer_norm(w))
+                w_head_q, w_head_k, w_head_v = \
+                    map(lambda layer: layer(self.layer_norm(w)), [self.q_net, self.k_net, self.v_net])
             else:
-                w_heads = self.qkv_net(w)
+                w_head_q, w_head_k, w_head_v = \
+                    map(lambda layer: layer(w), [self.q_net, self.k_net, self.v_net])
             r_head_k = self.r_net(r)
-
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
         klen = w_head_k.size(0)
 
@@ -391,8 +395,6 @@ class MemTransformerLM(nn.Module):
         
         # It is very important shit, we don't support that
         assert self.ext_len == 0
-
-        self.attn_type = attn_type
 
         self.layer_norms = nn.ModuleList([
             nn.LayerNorm(d_model) for _ in range(3)
