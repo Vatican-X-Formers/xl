@@ -335,7 +335,7 @@ def get_lm_corpus(datadir, dataset, vocab):
             kwargs['lower_case'] = False
             kwargs['vocab_file'] = os.path.join(datadir, '1b_word_vocab.txt')
         elif dataset in ['enwik8', 'text8']:
-            pass
+            kwargs['special'] = ['<eos>']
 
         corpus = Corpus(datadir, dataset, vocab, **kwargs)
         with utils.distributed.sync_workers() as rank:
