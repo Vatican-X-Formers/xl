@@ -409,7 +409,7 @@ class MemTransformerLM(nn.Module):
 
             return layers
 
-        assert pre_lnorm == True, 'We mimic Trax setup with pre_lnorm'
+        # assert pre_lnorm == True, 'We mimic Trax setup with pre_lnorm'
         pre_layers, (funnel_layers, shorten_factor), post_layers = eval(funnel_config)
         assert funnel_resample in ['linear', 'naive'], \
                     'Now we only support two upsampling/downsampling methods'
