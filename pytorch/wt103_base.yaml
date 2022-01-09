@@ -6,7 +6,7 @@ wt103: &wt103
 train: &train
    <<: *wt103
    cuda: true
-   n_layer: 16
+   n_layer: 0
    d_model: 512
    n_head: 8
    d_head: 64
@@ -28,6 +28,10 @@ train: &train
    eval_interval: 5000
    vocab: word
    adaptive: true
+   pre_lnorm: true
+   batch_chunk: 4
+   funnel_config: "[2, (8, 3), 2]"
+   funnel_resample: naive
 
 eval: &eval
    <<: *wt103
