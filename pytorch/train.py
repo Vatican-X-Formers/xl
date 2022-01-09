@@ -243,6 +243,10 @@ def parse_args():
                           help='Use the same attn length for all tokens')
     training.add_argument('--swap_mem', action='store_true',
                           help='Swap memory tensors to cpu')
+    training.add_argument('--min_train_sf', type=int, default=3)
+    training.add_argument('--max_train_sf', type=int, default=3)
+    training.add_argument('--min_eval_sf', type=int, default=3)
+    training.add_argument('--max_eval_sf', type=int, default=3)
 
     val = parser.add_argument_group('validation setup')
     val.add_argument('--eval_tgt_len', type=int, default=192,
@@ -480,7 +484,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
     if args.swap_mem and mems[i] is not None:
         mems[i] = mems[i].to(device, non_blocking=True)
 
-    sf = torch.randint(2, 4, ()).item()
+    sf = torch.randint(args.min_train_sf, args.max_train_sf + 1, ()).item()
 
     enable_autocast = args.fp16 and args.amp == 'pytorch'
     with torch.cuda.amp.autocast(enable_autocast):
@@ -636,7 +640,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
 
-        for eval_sf in range(2, 4):
+        for eval_sf in range(args.min_eval_sf, args.max_eval_sf + 1):
             if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
                 eval_start_time = time.time()
                 val_loss = evaluate(va_iter, model, args, eval_sf=eval_sf)
