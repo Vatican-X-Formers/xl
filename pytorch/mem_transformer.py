@@ -37,7 +37,7 @@ class PositionwiseFF(nn.Module):
         self.dropout = dropout
 
         self.CoreNet = nn.Sequential(
-            nn.Linear(d_model, d_inner), 
+            nn.Linear(d_model, d_inner),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
@@ -88,7 +88,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.scale = 1 / (d_head ** 0.5)
 
         self.pre_lnorm = pre_lnorm
-    
+
     def _rel_shift(self, x):
         zero_pad = torch.zeros((x.size(0), x.size(1), x.size(2), 1),
                                device=x.device, dtype=x.dtype)
@@ -267,22 +267,11 @@ class AdaptiveEmbedding(nn.Module):
 class Upsampler(nn.Module):
     def __init__(self, embedding_dim, upsample_factor, mode='linear'):
         super().__init__()
-        self.upsample_factor = upsample_factor
-        self.mode = mode
         self.ln = nn.LayerNorm(embedding_dim)
-        if mode == 'linear':
-            self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
-    
-    def forward(self, x, residual):
+
+    def forward(self, x, residual, sf):
         # T x B x C
-        if self.mode == 'linear':
-            # T x B x C -> B x T x C
-            x = x.transpose(0, 1)
-            x = self.upsample_layer(x)
-            x = x.reshape(x.size(0), x.size(1) * self.upsample_factor, -1)
-            x = x.transpose(0, 1)
-        else:
-            x = x.repeat_interleave(self.upsample_factor, dim=0)
+        x = x.repeat_interleave(sf, dim=0)
 
         assert x.size(0) >= residual.size(0)
         # The upsampled vector can be longer than tgt_len, the len from just before shortening
@@ -294,23 +283,9 @@ class Upsampler(nn.Module):
 class Downsampler(nn.Module):
     def __init__(self, embedding_dim, downsample_factor, mode='linear'):
         super().__init__()
-        self.mode = mode
-        self.downsample_factor = downsample_factor
-        if mode == 'linear':
-            self.downsample_layer = nn.Linear(
-                embedding_dim * downsample_factor, 
-                embedding_dim
-            )
-        else:
-            self.downsample_layer = nn.AvgPool1d(
-                kernel_size = downsample_factor, 
-                stride = downsample_factor
-            )
-    
-    def forward(self, x, mems):
-        # Input is of shape T x B x C
-        sf = self.downsample_factor
 
+    def forward(self, x, mems, sf):
+        # Input is of shape T x B x C
         if mems is not None and mems.numel() > 0:
             last_mems = mems[-1] # Outputs of the first stack of vanillas
             assert last_mems.size(0) > (sf - 1)
@@ -323,27 +298,15 @@ class Downsampler(nn.Module):
             # Hack to prevent destroing the tensor when T is divisible by sf
             x = x[:-(x.size(0) % sf)]
 
-        assert x.size(0) % self.downsample_factor == 0, \
+        assert x.size(0) % sf == 0, \
             'tgt_len not divisible by sf'
 
-        # T x B x C
-        if self.mode == 'linear':
-            # T x B x C -> B x T x C
-            x = x.transpose(0, 1)
-            x = x.reshape(
-                x.size(0), 
-                x.size(1) // self.downsample_factor, 
-                x.size(2) * self.downsample_factor
-            )
-            x = self.downsample_layer(x)
-            x = x.transpose(0, 1)
-        else:
-            # T x B x C -> B x T x C -> B x C x T
-            x = x.transpose(0, 1).transpose(1, 2)
-            x = self.downsample_layer(x)
-            x = x.transpose(1, 2).transpose(0, 1)
+        # T x B x C -> B x T x C -> B x C x T
+        x = x.transpose(0, 1).transpose(1, 2)
+        x = F.avg_pool1d(x, kernel_size=sf, stride=sf)
+        x = x.transpose(1, 2).transpose(0, 1)
 
-        return x 
+        return x
 
 
 class MemTransformerLM(nn.Module):
@@ -354,10 +317,10 @@ class MemTransformerLM(nn.Module):
                  cutoffs=[], adapt_inp=False,
                  same_length=False, attn_type=0, clamp_len=-1,
                  sample_softmax=-1,
-                 funnel_config="[3, (1, 2) ,3]", 
+                 funnel_config="[3, (1, 2) ,3]",
                  funnel_resample='naive'):
         # TODO: The loss is crazy fucking big, maybe do some better initialization?
-        # Let's try initialization using xavier uniform, maybe something like in 
+        # Let's try initialization using xavier uniform, maybe something like in
         # wav2vec2 from fairseq or Transformer LS
         # TODO: W train.py jest funkcja init_weights, ale wyprintuj ją zeby sprawdzic
         # czy ona się rzeczywiście uruchamia i inicjalizuje poprawnie wszystkie klasy
@@ -379,7 +342,7 @@ class MemTransformerLM(nn.Module):
         # Relative attention specific parameters
         self.pos_emb = PositionalEmbedding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
-        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_()) 
+        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
 
         self.tie_weight = tie_weight
         self.tie_projs = tie_projs
@@ -390,7 +353,7 @@ class MemTransformerLM(nn.Module):
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
-        
+
         # It is very important shit, we don't support that
         assert self.ext_len == 0
 
@@ -460,7 +423,7 @@ class MemTransformerLM(nn.Module):
         # self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
-        self.clamp_len = clamp_len       
+        self.clamp_len = clamp_len
 
     def reset_length(self, tgt_len, ext_len, mem_len):
         if tgt_len < 1:
@@ -482,8 +445,8 @@ class MemTransformerLM(nn.Module):
                 layer = self.layers[i]
                 if not isinstance(layer, Upsampler) and not isinstance(layer, Downsampler):
                     mems.append(
-                        torch.empty(len(layer), 0, 
-                                dtype=param.dtype, 
+                        torch.empty(len(layer), 0,
+                                dtype=param.dtype,
                                 device=param.device)
                     )
             return mems
@@ -511,7 +474,7 @@ class MemTransformerLM(nn.Module):
                 new_mems = concat_mems_hids[:, beg_idx:end_idx].detach()
 
         return new_mems
-        
+
 
     def _forward(self, core_input, mems=None, layers = None, mem_len = 0, clamp_len = 0):
         # Core_input is of size (T x B x C)
@@ -555,7 +518,7 @@ class MemTransformerLM(nn.Module):
             # Mems are none when mem_len is set to 0, we want to keep this possibility
             mems_i = None if mems is None else mems[i]
             core_out = layer(
-                core_out, pos_emb, self.r_w_bias, self.r_r_bias, 
+                core_out, pos_emb, self.r_w_bias, self.r_r_bias,
                 dec_attn_mask=dec_attn_mask, mems=mems_i
             )
 
@@ -566,10 +529,10 @@ class MemTransformerLM(nn.Module):
         return core_out, new_mems
 
 
-    def forward(self, data, target, mems):
+    def forward(self, data, target, mems, sf):
         # Data and target are of size T x B
         if mems is None:
-            mems = self.init_mems() 
+            mems = self.init_mems()
 
         # Data loader serves most batches of length args.tgt_len but
         # the last batch could be leftover and could be shorter
@@ -596,16 +559,16 @@ class MemTransformerLM(nn.Module):
                 # We take the last hids which are the final outputs of decoder stack before shortening
                 # We also make sure to take last tgt_len elements as these are the actual outputs
                 # residual_mems_id = mems_index - 2 # -1 are hids from funnel, -2 are from before shortening
-                hidden = layers(hidden, residual=residual)
-                current_sf = current_sf // layers.upsample_factor
+                hidden = layers(hidden, residual=residual, sf=sf)
+                current_sf = current_sf // sf
             elif isinstance(layers, Downsampler):
                 residual = hidden
-                hidden = layers(hidden, mems[0] if mems is not None else None)
-                current_sf *= layers.downsample_factor
+                hidden = layers(hidden, mems[0] if mems is not None else None, sf=sf)
+                current_sf *= sf
             else:
                 hidden, new_mem = self._forward(
-                    hidden, 
-                    mems=mems[mems_index] if mems is not None else None, 
+                    hidden,
+                    mems=mems[mems_index] if mems is not None else None,
                     layers=layers,
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,

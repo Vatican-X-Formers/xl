@@ -428,7 +428,7 @@ def update_dropatt(m, args):
         m.dropatt.p = args.dropatt
 
 
-def evaluate(eval_iter, model, args):
+def evaluate(eval_iter, model, args, eval_sf):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
@@ -454,7 +454,7 @@ def evaluate(eval_iter, model, args):
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                loss, mems = model(data, target, mems)
+                loss, mems = model(data, target, mems, eval_sf)
                 loss = loss.float().mean().type_as(loss)
             if warm:
                 # assert (mems is None) or mems.size(1) == model.mem_len
@@ -480,9 +480,11 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
     if args.swap_mem and mems[i] is not None:
         mems[i] = mems[i].to(device, non_blocking=True)
 
+    sf = torch.randint(2, 4, ()).item()
+
     enable_autocast = args.fp16 and args.amp == 'pytorch'
     with torch.cuda.amp.autocast(enable_autocast):
-        loss, mems[i] = model(data_i, target_i, mems[i])
+        loss, mems[i] = model(data_i, target_i, mems[i], sf)
         loss = loss.float().mean().type_as(loss) / args.batch_chunk
 
     if args.swap_mem and mems[i] is not None:
@@ -634,59 +636,60 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
 
-        if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
-            eval_start_time = time.time()
-            val_loss = evaluate(va_iter, model, args)
-            val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
+        for eval_sf in range(2, 4):
+            if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
+                eval_start_time = time.time()
+                val_loss = evaluate(va_iter, model, args, eval_sf=eval_sf)
+                val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
 
-            logging.info('-' * 100)
-            log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
-                      '| valid loss {:5.2f}'.format(
-                          train_step // args.eval_interval,
-                          train_step,
-                          (time.time() - eval_start_time),
-                          val_loss,
-                          )
-            if run:
-                run['val/loss'].log(val_loss, step=train_step)
+                logging.info('-' * 100)
+                log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
+                          '| valid loss {:5.2f}'.format(
+                              train_step // args.eval_interval,
+                              train_step,
+                              (time.time() - eval_start_time),
+                              val_loss,
+                              )
+                if run:
+                    run[f'val/loss_sf_{eval_sf}'].log(val_loss, step=train_step)
 
-            dllogger_data = {
-                'valid_elapsed': (time.time() - eval_start_time),
-                'valid_loss': val_loss,
-                }
+                dllogger_data = {
+                    'valid_elapsed': (time.time() - eval_start_time),
+                    'valid_loss': val_loss,
+                    }
 
-            if args.dataset in ['enwik8', 'text8']:
-                log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
-                dllogger_data['valid_bits_per_character'] = val_loss / math.log(2)
-            else:
-                log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
-                dllogger_data['valid_perplexity'] = math.exp(val_loss)
-            logging.info(log_str)
-            logging.info('-' * 100)
-            dllogger.log(step=tuple([train_step]), data=dllogger_data)
+                if args.dataset in ['enwik8', 'text8']:
+                    log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
+                    dllogger_data['valid_bits_per_character'] = val_loss / math.log(2)
+                else:
+                    log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
+                    dllogger_data['valid_perplexity'] = math.exp(val_loss)
+                logging.info(log_str)
+                logging.info('-' * 100)
+                dllogger.log(step=tuple([train_step]), data=dllogger_data)
 
-            last_iter = tr_iter.last_iter
+                last_iter = tr_iter.last_iter
 
-            # Check if the validation loss is the best we've seen so far.
-            is_best = False
-            if not best_val_loss or val_loss < best_val_loss:
-                best_val_loss = val_loss
-                is_best = True
+                # Check if the validation loss is the best we've seen so far.
+                is_best = False
+                if not best_val_loss or val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    is_best = True
 
-            # if not args.debug:
-            #     save_checkpoint(args, model, model_config, optimizer, scheduler,
-            #                     scaler, vocab, epoch, batch, last_iter,
-            #                     train_step, best_val_loss, is_best,
-            #                     args.work_dir)
+                # if not args.debug:
+                #     save_checkpoint(args, model, model_config, optimizer, scheduler,
+                #                     scaler, vocab, epoch, batch, last_iter,
+                #                     train_step, best_val_loss, is_best,
+                #                     args.work_dir)
 
-            # dev-performance based learning rate annealing
-            if args.scheduler == 'dev_perf':
-                scheduler.step(val_loss)
-                if scheduler_sparse:
-                    scheduler_sparse.step(val_loss)
+                # dev-performance based learning rate annealing
+                if args.scheduler == 'dev_perf':
+                    scheduler.step(val_loss)
+                    if scheduler_sparse:
+                        scheduler_sparse.step(val_loss)
 
-            # subtract eval time from timers for training
-            log_start_time += time.time() - eval_start_time
+                # subtract eval time from timers for training
+                log_start_time += time.time() - eval_start_time
 
         if interrupted:
             logging.info(f'Received SIGTERM, exiting')
