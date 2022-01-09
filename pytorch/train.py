@@ -56,6 +56,7 @@ from utils.exp_utils import l2_promote
 from utils.exp_utils import log_env_info
 from utils.exp_utils import register_ignoring_timeout_handler
 
+run = None
 
 def parse_args():
     parent_parser = argparse.ArgumentParser(
@@ -160,7 +161,7 @@ def parse_args():
     model.add_argument('--not_tied', action='store_true',
                        help='Do not tie the word embedding and softmax weights')
     model.add_argument('--clamp_len', type=int, default=-1,
-                       help='Use the same pos embeddings after clamp_len')
+                       help='Use the same pos embeddings after clamp_len') # XDDDD
     model.add_argument('--adaptive', action='store_true',
                        help='Use adaptive softmax')
     model.add_argument('--div_val', type=int, default=1,
@@ -195,8 +196,6 @@ def parse_args():
                      help='Max number of training steps for LR scheduler')
     opt.add_argument('--warmup_step', type=int, default=1000,
                      help='Number of iterations for LR warmup')
-    opt.add_argument('--decay_rate', type=float, default=0.5,
-                     help='Decay factor when ReduceLROnPlateau is used')
     opt.add_argument('--lr_min', type=float, default=0.0,
                      help='Minimum learning rate during annealing')
     opt.add_argument('--clip', type=float, default=0.25,
@@ -222,13 +221,13 @@ def parse_args():
     training.add_argument('--batch_chunk', type=int, default=1,
                           help='Split batch into chunks and train with '
                           'gradient accumulation')
-    training.add_argument('--roll', action='store_true',
+    training.add_argument('--roll', action='store_true', # XXX
                           help='Enable random shifts within each data stream')
-    training.add_argument('--tgt_len', type=int, default=192,
+    training.add_argument('--tgt_len', type=int, default=192, # XXX
                           help='Number of tokens to predict')
-    training.add_argument('--ext_len', type=int, default=0,
+    training.add_argument('--ext_len', type=int, default=0, # XXX
                           help='Length of the extended context')
-    training.add_argument('--mem_len', type=int, default=192,
+    training.add_argument('--mem_len', type=int, default=192, # XXX
                           help='Length of the retained previous heads')
     training.add_argument('--seed', type=int, default=1111,
                           help='Random seed')
@@ -237,10 +236,8 @@ def parse_args():
                           help='Use multiple GPU')
     training.add_argument('--gpu0_bsz', type=int, default=-1,
                           help='Batch size on gpu 0 (for "dp" backend)')
-    training.add_argument('--same_length', action='store_true',
+    training.add_argument('--same_length', action='store_true', # XXX
                           help='Use the same attn length for all tokens')
-    training.add_argument('--varlen', action='store_true',
-                          help='Use variable length')
     training.add_argument('--swap_mem', action='store_true',
                           help='Swap memory tensors to cpu')
 
@@ -333,8 +330,8 @@ def save_checkpoint(args, model, model_config, optimizer, scheduler, scaler,
         last_chkpt_path = os.path.join(work_dir, last_chkpt_fname)
         if rank == 0:
             # always save last checkpoint
-            logging.info(f'Saving checkpoint to {last_chkpt_path}')
-            torch.save(state, last_chkpt_path)
+            # logging.info(f'Saving checkpoint to {last_chkpt_path}')
+            # torch.save(state, last_chkpt_path)
 
             # save best checkpoint if better than previous best
             if is_best:
@@ -514,10 +511,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     log_start_time = time.time()
 
     mems = [None for _ in range(args.batch_chunk)]
-    if args.varlen:
-        train_iter = tr_iter.get_varlen_iter(start=last_iter)
-    else:
-        train_iter = tr_iter.get_fixlen_iter(start=last_iter)
+    train_iter = tr_iter.get_fixlen_iter(start=last_iter)
 
     for batch, (data, target, seq_len, _) in enumerate(train_iter, start=last_batch+1):
         log_step += 1
@@ -609,6 +603,11 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     cur_loss,
                     )
 
+            if run:
+                run['lr'].log(lr, step=train_step)
+                run['train/loss'].log(cur_loss, step=train_step)
+                run['tokens_per_sec'].log(throughput, step=train_step)
+
             dllogger_data = {
                 'epoch': epoch,
                 'train_batch': batch+1,
@@ -645,6 +644,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                           (time.time() - eval_start_time),
                           val_loss,
                           )
+            if run:
+                run['val/loss'].log(val_loss, step=train_step)
 
             dllogger_data = {
                 'valid_elapsed': (time.time() - eval_start_time),
@@ -669,11 +670,11 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 best_val_loss = val_loss
                 is_best = True
 
-            if not args.debug:
-                save_checkpoint(args, model, model_config, optimizer, scheduler,
-                                scaler, vocab, epoch, batch, last_iter,
-                                train_step, best_val_loss, is_best,
-                                args.work_dir)
+            # if not args.debug:
+            #     save_checkpoint(args, model, model_config, optimizer, scheduler,
+            #                     scaler, vocab, epoch, batch, last_iter,
+            #                     train_step, best_val_loss, is_best,
+            #                     args.work_dir)
 
             # dev-performance based learning rate annealing
             if args.scheduler == 'dev_perf':
@@ -694,7 +695,6 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
 
 def main():
-    run = neptune.init('syzymon/hourglass-pytorch')
     args = parse_args()
     if args.affinity != 'disabled':
         nproc_per_node = torch.cuda.device_count()
@@ -792,7 +792,6 @@ def main():
                                   args.eval_tgt_len, device=device,
                                   mem_len=eval_mem_len, ext_len=args.ext_len)
 
-    print(f'NCCL: {torch.cuda.nccl.version()}')
     # adaptive softmax / embedding
     cutoffs, tie_projs = [], [False]
     if args.adaptive:
@@ -831,8 +830,17 @@ def main():
         'clamp_len': args.clamp_len,
         'sample_softmax': args.sample_softmax,
         }
+    if rank == 0:
+        global run
+        run = neptune.init('syzymon/hourglass-pytorch')
+        run['model_config'] = model_config
+        run['args'] = vars(args)
+        run['branch'] = os.getenv('TRAX_BRANCH')
 
     model = MemTransformerLM(**model_config)
+
+    if args.local_rank == 0:
+        print(model)
 
     model.apply(functools.partial(weights_init, args=args))
     # ensure embedding init is not overridden by out_layer in case of weight sharing
@@ -844,36 +852,18 @@ def main():
     # optimizer
     if args.optim.lower() == 'sgd':
         if args.sample_softmax > 0:
-            dense_params, sparse_params = [], []
-            for param in model.parameters():
-                if param.size() == model.word_emb.weight.size():
-                    sparse_params.append(param)
-                else:
-                    dense_params.append(param)
-            optimizer_sparse = optim.SGD(sparse_params, lr=args.lr * 2)
-            optimizer = optim.SGD(dense_params, lr=args.lr, momentum=args.mom)
+            raise NotImplementedError
         else:
             optimizer = optim.SGD(model.parameters(), lr=args.lr,
                                   momentum=args.mom)
             optimizer_sparse = None
     elif args.optim.lower() == 'adam':
         if args.sample_softmax > 0:
-            dense_params, sparse_params = [], []
-            for param in model.parameters():
-                if param.size() == model.word_emb.weight.size():
-                    sparse_params.append(param)
-                else:
-                    dense_params.append(param)
-            optimizer_sparse = optim.SparseAdam(sparse_params, lr=args.lr)
-            optimizer = optim.Adam(dense_params, lr=args.lr,
-                                   weight_decay=args.weight_decay)
+            raise NotImplementedError
         else:
             optimizer = optim.Adam(model.parameters(), lr=args.lr,
                                    weight_decay=args.weight_decay)
             optimizer_sparse = None
-    elif args.optim.lower() == 'adagrad':
-        optimizer = optim.Adagrad(model.parameters(), lr=args.lr)
-        optimizer_sparse = None
     elif args.optim.lower() == 'lamb':
         optimizer = lamb.Lamb(model.parameters(), lr=args.lr,
                               weight_decay=args.weight_decay)
@@ -904,11 +894,7 @@ def main():
                                              find_unused_parameters=True,
                                              )
     elif args.multi_gpu == 'dp':
-        if args.gpu0_bsz >= 0:
-            para_model = BalancedDataParallel(args.gpu0_bsz // args.batch_chunk,
-                                              model, dim=1).to(device)
-        else:
-            para_model = nn.DataParallel(model, dim=1).to(device)
+        raise NotImplementedError
     else:
         para_model = model
 
@@ -922,42 +908,11 @@ def main():
         scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer, max_step - args.warmup_step, eta_min=args.eta_min)
         if args.sample_softmax > 0 and optimizer_sparse is not None:
-            scheduler_sparse = optim.lr_scheduler.CosineAnnealingLR(
-                optimizer_sparse, max_step - args.warmup_step,
-                eta_min=args.eta_min)
+            raise NotImplementedError
         else:
             scheduler_sparse = None
-    elif args.scheduler == 'inv_sqrt':
-        # originally used for Transformer (in Attention is all you need)
-        def lr_lambda(step):
-            # return a multiplier instead of a learning rate
-            if step == 0 and args.warmup_step == 0:
-                return 1.
-            else:
-                return 1. / (step ** 0.5) if step > args.warmup_step \
-                    else step / (args.warmup_step ** 1.5)
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-        if args.sample_softmax > 0 and optimizer_sparse is not None:
-            scheduler_sparse = optim.lr_scheduler.LambdaLR(
-                optimizer_sparse,
-                lr_lambda=lr_lambda
-                )
-        else:
-            scheduler_sparse = None
-    elif args.scheduler == 'dev_perf':
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=args.decay_rate, patience=args.patience,
-            min_lr=args.lr_min,
-            )
-        if args.sample_softmax > 0 and optimizer_sparse is not None:
-            scheduler_sparse = optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer_sparse, factor=args.decay_rate, patience=args.patience,
-                min_lr=args.lr_min,
-                )
-        else:
-            scheduler_sparse = None
-    elif args.scheduler == 'constant':
-        pass
+    else:
+        raise NotImplementedError
 
     logging.info('=' * 100)
     for k, v in args.__dict__.items():
