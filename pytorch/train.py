@@ -180,7 +180,7 @@ def parse_args():
                        help='Parameters initialized by N(0, init_std)')
     model.add_argument('--proj_init_std', type=float, default=0.01,
                        help='Parameters initialized by N(0, init_std)')
-    model.add_argument('--funnel_config', type=str, default="[4, (12, 3) ,4]",
+    model.add_argument('--funnel_config', type=str, default="[3, (8, 3) ,3]",
         help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
 
@@ -476,9 +476,6 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
     cpu = torch.device('cpu')
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
-
-    # We don't support that, we don't need to
-    assert not args.swap_mem
 
     if args.swap_mem and mems[i] is not None:
         mems[i] = mems[i].to(device, non_blocking=True)
@@ -872,8 +869,14 @@ def main():
             optimizer = optim.Adam(model.parameters(), lr=args.lr,
                                    weight_decay=args.weight_decay)
             optimizer_sparse = None
-    else:
-        raise NotImplementedError
+    elif args.optim.lower() == 'lamb':
+        optimizer = lamb.Lamb(model.parameters(), lr=args.lr,
+                              weight_decay=args.weight_decay)
+        optimizer_sparse = None
+    elif args.optim.lower() == 'jitlamb':
+        optimizer = lamb.JITLamb(model.parameters(), lr=args.lr,
+                                 weight_decay=args.weight_decay)
+        optimizer_sparse = None
 
     model = model.to(device)
 
