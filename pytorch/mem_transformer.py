@@ -112,14 +112,12 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
                 cat = self.layer_norm(cat)
-                w_head_q, w_head_k, w_head_v = \
-                    map(lambda layer: layer(cat), [self.q_net, self.k_net, self.v_net])
-            else:
-                w_head_q, w_head_k, w_head_v = \
-                    map(lambda layer: layer(cat), [self.q_net, self.k_net, self.v_net])
+
+            w_head_q, w_head_k, w_head_v = \
+                map(lambda layer: layer(cat), [self.q_net, self.k_net, self.v_net])
             r_head_k = self.r_net(r)
 
-            assert w_head_q.size(0) == qlen
+            w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
                 w_head_q, w_head_k, w_head_v = \
