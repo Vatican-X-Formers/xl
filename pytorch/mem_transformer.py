@@ -392,7 +392,7 @@ class MemTransformerLM(nn.Module):
         self.ext_len = ext_len
         
         # It is very important shit, we don't support that
-        assert self.ext_len == 0
+        # assert self.ext_len == 0
 
         self.layer_norms = nn.ModuleList([
             nn.LayerNorm(d_model) for _ in range(3)
@@ -469,7 +469,7 @@ class MemTransformerLM(nn.Module):
             raise RuntimeError(f'ext_len should be >= 0, but got {ext_len}')
         if mem_len < 0:
             raise RuntimeError(f'mem_len should be >= 0, but got {mem_len}')
-        assert ext_len == 0
+        # assert ext_len == 0
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
@@ -621,6 +621,9 @@ class MemTransformerLM(nn.Module):
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
         # hidden = self.final_cast(hidden)
+        
+        # Because we might use ext_len > 0
+        hidden = hidden[-tgt_len:]
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
 
