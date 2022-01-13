@@ -783,17 +783,19 @@ def main():
 
     if args.mem_len == 0:
         eval_mem_len = 0
+        eval_ext_len = args.ext_len + args.tgt_len - args.eval_tgt_len
     else:
         eval_mem_len = args.mem_len + args.tgt_len - args.eval_tgt_len
+        eval_ext_len = args.ext_len
 
     tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
                                   device=device, ext_len=args.ext_len)
     va_iter = corpus.get_iterator('valid', args.eval_batch_size,
                                   args.eval_tgt_len, device=device,
-                                  mem_len=eval_mem_len, ext_len=args.ext_len)
+                                  mem_len=eval_mem_len, ext_len=eval_ext_len)
     te_iter = corpus.get_iterator('test', args.eval_batch_size,
                                   args.eval_tgt_len, device=device,
-                                  mem_len=eval_mem_len, ext_len=args.ext_len)
+                                  mem_len=eval_mem_len, ext_len=eval_ext_len)
 
     # adaptive softmax / embedding
     cutoffs, tie_projs = [], [False]
