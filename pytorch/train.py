@@ -1009,34 +1009,35 @@ def main():
     summary = {}
     if not args.debug and not args.no_eval:
         # Run on test data.
-        test_start_time = time.time()
-        with torch.autograd.profiler.emit_nvtx(enabled=args.profile):
-            test_loss = evaluate(te_iter, model, args)
-            test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
-        test_elapsed = time.time() - test_start_time
+        for eval_sf in range(args.min_eval_sf, args.max_eval_sf + 1):
+            test_start_time = time.time()
+            with torch.autograd.profiler.emit_nvtx(enabled=args.profile):
+                test_loss = evaluate(te_iter, model, args, eval_sf=eval_sf)
+                test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
+            test_elapsed = time.time() - test_start_time
 
-        logging.info('=' * 100)
-        if args.dataset in ['enwik8', 'text8']:
-            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test bpc {:9.5f}'.format(
-                test_elapsed, test_loss, test_loss / math.log(2)))
-        else:
-            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test ppl {:9.3f}'.format(
-                test_elapsed, test_loss, math.exp(test_loss)))
-        if run:
-            run['test_loss'].log(test_loss, step=train_step)
-            run['test_ppl'].log(math.exp(test_loss), step=train_step)
+            logging.info('=' * 100)
+            if args.dataset in ['enwik8', 'text8']:
+                logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test bpc {:9.5f}'.format(
+                    test_elapsed, test_loss, test_loss / math.log(2)))
+            else:
+                logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test ppl {:9.3f}'.format(
+                    test_elapsed, test_loss, math.exp(test_loss)))
+            if run:
+                run[f'test_loss_sf_{eval_sf}'].log(test_loss, step=train_step)
+                run[f'test_ppl_sf_{eval_sf}'].log(math.exp(test_loss), step=train_step)
 
-        logging.info('=' * 100)
+            logging.info('=' * 100)
 
-        summary.update({
-            'test_elapsed': test_elapsed,
-            'test_loss': test_loss,
-            })
+            summary.update({
+                'test_elapsed': test_elapsed,
+                'test_loss': test_loss,
+                })
 
-        if args.dataset in ['enwik8', 'text8']:
-            summary['test_bits_per_character'] = test_loss / math.log(2)
-        else:
-            summary['test_perplexity'] = math.exp(test_loss)
+            if args.dataset in ['enwik8', 'text8']:
+                summary['test_bits_per_character'] = test_loss / math.log(2)
+            else:
+                summary['test_perplexity'] = math.exp(test_loss)
 
     logging.info(f'Training time: {(elapsed / 60):.2f} minutes')
     logging.info(f'Training throughput: {meters["train_throughput"].avg:.2f} tok/s')
