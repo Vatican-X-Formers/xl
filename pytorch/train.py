@@ -1000,12 +1000,7 @@ def main():
     # Test
     ###########################################################################
     summary = {}
-    test_path = os.path.join(args.work_dir, 'checkpoint_best.pt')
-    if not args.debug and not args.no_eval and os.path.exists(test_path):
-        # Load the best saved model.
-        checkpoint = load_checkpoint(test_path)
-        model.load_state_dict(checkpoint['model_state'])
-
+    if not args.debug and not args.no_eval:
         # Run on test data.
         test_start_time = time.time()
         with torch.autograd.profiler.emit_nvtx(enabled=args.profile):
@@ -1020,6 +1015,10 @@ def main():
         else:
             logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test ppl {:9.3f}'.format(
                 test_elapsed, test_loss, math.exp(test_loss)))
+        if run:
+            run['test_loss'].log(test_loss, step=train_step)
+            run['test_ppl'].log(math.exp(test_loss), step=train_step)
+
         logging.info('=' * 100)
 
         summary.update({
