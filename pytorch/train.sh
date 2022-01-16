@@ -18,5 +18,4 @@ export OMP_NUM_THREADS=1
 
 echo 'Run training...'
 python -m torch.distributed.launch --nproc_per_node="$2" train.py \
-    --config_file "$1" \
-    "${@:3}"
+    --config_file "$1"
