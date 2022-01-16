@@ -277,7 +277,15 @@ class Corpus(object):
                 os.path.join(path, 'valid.txt'), ordered=True)
             self.test = self.vocab.encode_file(
                 os.path.join(path, 'test.txt'), ordered=True)
-        elif self.dataset in ['enwik8', 'text8']:
+        elif self.dataset in ['enwik8']:
+            self.train = self.vocab.encode_file(
+                os.path.join(path, 'train.txt'), ordered=True, add_eos=True)
+            self.valid = self.vocab.encode_file(
+                os.path.join(path, 'valid.txt'), ordered=True, add_eos=True)
+            self.test = self.vocab.encode_file(
+                os.path.join(path, 'test.txt'), ordered=True, add_eos=True)
+        elif self.dataset in ['text8']:
+            # There are no linebreaks on text8
             self.train = self.vocab.encode_file(
                 os.path.join(path, 'train.txt'), ordered=True, add_eos=False)
             self.valid = self.vocab.encode_file(
@@ -332,7 +340,11 @@ def get_lm_corpus(datadir, dataset, vocab):
             kwargs['special'] = []
             kwargs['lower_case'] = False
             kwargs['vocab_file'] = os.path.join(datadir, '1b_word_vocab.txt')
-        elif dataset in ['enwik8', 'text8']:
+        elif dataset == 'enwik8':
+            # We preserve eos on enwiki
+            kwargs['special'] = ['<eos>']
+        elif dataset == 'text8':
+            # There are no eos on text8
             pass
 
         corpus = Corpus(datadir, dataset, vocab, **kwargs)
