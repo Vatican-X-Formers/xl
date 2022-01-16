@@ -43,7 +43,6 @@ except ModuleNotFoundError:
 from torch.nn.parallel import DistributedDataParallel
 
 import neptune.new as neptune
-import lamb
 import utils
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
@@ -869,14 +868,6 @@ def main():
             optimizer = optim.Adam(model.parameters(), lr=args.lr,
                                    weight_decay=args.weight_decay)
             optimizer_sparse = None
-    elif args.optim.lower() == 'lamb':
-        optimizer = lamb.Lamb(model.parameters(), lr=args.lr,
-                              weight_decay=args.weight_decay)
-        optimizer_sparse = None
-    elif args.optim.lower() == 'jitlamb':
-        optimizer = lamb.JITLamb(model.parameters(), lr=args.lr,
-                                 weight_decay=args.weight_decay)
-        optimizer_sparse = None
 
     model = model.to(device)
 
