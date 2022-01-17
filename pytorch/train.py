@@ -184,10 +184,10 @@ def parse_args():
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
 
     opt = parser.add_argument_group('optimizer setup')
-    opt.add_argument('--optim', default='jitlamb', type=str,
+    opt.add_argument('--optim', default='adam', type=str,
                      choices=['adam', 'sgd', 'adagrad', 'lamb', 'jitlamb'],
                      help='Optimizer to use')
-    opt.add_argument('--lr', type=float, default=0.01,
+    opt.add_argument('--lr', type=float, default=0.00025,
                      help='Initial learning rate')
     opt.add_argument('--mom', type=float, default=0.0,
                      help='Momentum for sgd')
@@ -208,7 +208,7 @@ def parse_args():
                      help='Only clip the gradient of non-embedding params')
     opt.add_argument('--patience', type=int, default=0,
                      help='Patience')
-    opt.add_argument('--eta_min', type=float, default=0.001,
+    opt.add_argument('--eta_min', type=float, default=0.000,
                      help='Min learning rate for cosine scheduler')
 
     training = parser.add_argument_group('training setup')
@@ -679,10 +679,10 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             #                     args.work_dir)
 
             # dev-performance based learning rate annealing
-            if args.scheduler == 'dev_perf':
-                scheduler.step(val_loss)
-                if scheduler_sparse:
-                    scheduler_sparse.step(val_loss)
+            # if args.scheduler == 'dev_perf':
+            #     scheduler.step(val_loss)
+            #     if scheduler_sparse:
+            #         scheduler_sparse.step(val_loss)
 
             # subtract eval time from timers for training
             log_start_time += time.time() - eval_start_time
