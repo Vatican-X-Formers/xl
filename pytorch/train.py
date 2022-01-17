@@ -46,7 +46,7 @@ import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
-from utils.data_parallel import BalancedDataParallel
+# from utils.data_parallel import BalancedDataParallel
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import benchmark
