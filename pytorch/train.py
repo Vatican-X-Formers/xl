@@ -35,10 +35,10 @@ try:
     from apex import amp
 except ModuleNotFoundError:
     warnings.warn('APEX AMP is unavailable')
-try:
-    import pyprof
-except ModuleNotFoundError:
-    warnings.warn('PyProf is unavailable')
+# try:
+#     import pyprof
+# except ModuleNotFoundError:
+#     warnings.warn('PyProf is unavailable')
 
 from torch.nn.parallel import DistributedDataParallel
 
