@@ -15,17 +15,18 @@ train: &train
    dropatt: 0.0
    optim: adam
    lr: 0.00025
-   warmup_step: 0
-   max_step: 100000
-   tgt_len: 2048
+   warmup_step: 4000
+   max_step: 400000
+   tgt_len: 2049
    mem_len: 0
-   eval_tgt_len: 2048
-   batch_size: 8
+   eval_tgt_len: 2049
+   batch_size: 1
    multi_gpu: ddp
    log_interval: 100
    eval_interval: 5000
    batch_chunk: 1
-   funnel_config: "[2, (8, 2), 2]"
+   pre_lnorm: true
+   funnel_config: "[8, (0, 1), 0]"
    funnel_resample: naive
 
 default:

@@ -34,6 +34,8 @@ class Vocab(object):
         self.vocab_file = vocab_file
 
     def tokenize(self, line, add_eos=False, add_double_eos=False):
+        import pdb
+        pdb.set_trace()
         line = line.strip()
         # convert to lower case
         if self.lower_case:
@@ -115,6 +117,8 @@ class Vocab(object):
                     add_double_eos=False):
         if verbose:
             print('encoding file {} ...'.format(path))
+        import pdb
+        pdb.set_trace()
         assert os.path.exists(path)
         encoded = []
         with open(path, 'r', encoding='utf-8') as f:
@@ -127,6 +131,8 @@ class Vocab(object):
 
         if ordered:
             encoded = torch.cat(encoded)
+        
+        pdb.set_trace()
 
         return encoded
 
