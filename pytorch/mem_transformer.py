@@ -289,8 +289,8 @@ class Upsampler(nn.Module):
             x = torch.gather(
                 x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, x.size(-1))
             )
-            x = upsampled_x.transpose(0, 1)
-            assert upsampled_x.size() == residual.size()
+            x = x.transpose(0, 1)
+            assert x.size() == residual.size()
 
         assert x.size(0) >= residual.size(0)
         # The upsampled vector can be longer than tgt_len, the len from just before shortening
@@ -364,7 +364,7 @@ class Downsampler(nn.Module):
             assert downsampling_mask is not None
             x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
             x = torch.cat(
-                [self.leftmost_group.repeat(1, x.size(1), 1), shortened_x], dim=0
+                [self.leftmost_group.repeat(1, x.size(1), 1), x], dim=0
             )
 
         return x 
@@ -435,7 +435,7 @@ class MemTransformerLM(nn.Module):
 
         # assert pre_lnorm == True, 'We mimic Trax setup with pre_lnorm'
         pre_layers, (funnel_layers, shorten_factor), post_layers = eval(funnel_config)
-        assert funnel_resample in ['linear', 'naive'], \
+        assert funnel_resample in ['linear', 'naive', 'custom'], \
                     'Now we only support two upsampling/downsampling methods'
         assert mem_len % shorten_factor == 0 and tgt_len % shorten_factor == 0, \
                     'Keep lengths divisible by sf'
@@ -446,7 +446,7 @@ class MemTransformerLM(nn.Module):
             ])
         else:
             print(f'You are using funnel in config {funnel_config}')
-            assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
+            # assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
             self.funnel_mode = funnel_resample
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
