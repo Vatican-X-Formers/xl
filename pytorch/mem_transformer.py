@@ -274,24 +274,23 @@ class Upsampler(nn.Module):
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
     
     def forward(self, x, residual, upsampling_mask = None):
-        # T x B x C
-        # pdb.set_trace()
-        assert upsampling_mask is not None
-        x = x.transpose(0, 1)
-        upsampled_x = torch.gather(x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, 512))
-        upsampled_x = upsampled_x.transpose(0, 1)
-        assert upsampled_x.size() == residual.size()
-        return self.ln(upsampled_x) + residual
-        assert False
-
         if self.mode == 'linear':
             # T x B x C -> B x T x C
             x = x.transpose(0, 1)
             x = self.upsample_layer(x)
             x = x.reshape(x.size(0), x.size(1) * self.upsample_factor, -1)
             x = x.transpose(0, 1)
-        else:
+        elif self.mode == 'naive':
             x = x.repeat_interleave(self.upsample_factor, dim=0)
+        elif self.mode == 'custom':
+            assert upsampling_mask is not None
+            # T x B x C
+            x = x.transpose(0, 1)
+            x = torch.gather(
+                x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, x.size(-1))
+            )
+            x = upsampled_x.transpose(0, 1)
+            assert upsampled_x.size() == residual.size()
 
         assert x.size(0) >= residual.size(0)
         # The upsampled vector can be longer than tgt_len, the len from just before shortening
@@ -304,47 +303,45 @@ class Downsampler(nn.Module):
     def __init__(self, embedding_dim, downsample_factor, mode='linear'):
         super().__init__()
         self.mode = mode
-        self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
         self.downsample_factor = downsample_factor
         if mode == 'linear':
             self.downsample_layer = nn.Linear(
                 embedding_dim * downsample_factor, 
                 embedding_dim
             )
-        else:
+            self.leftmost_group = nn.Parameter(
+                torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
+            )
+        elif mode == 'naive':
             self.downsample_layer = nn.AvgPool1d(
                 kernel_size = downsample_factor, 
                 stride = downsample_factor
             )
+            self.leftmost_group = nn.Parameter(
+                torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
+            )
+        elif mode == 'custom':
+            assert self.downsample_factor == 1, 'Just a special requirement of using custom mode'
+            self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
     
-    def forward(self, x, mems, downsampling_mask = None):
+    def forward(self, x, mems = None, downsampling_mask = None):
         # Input is of shape T x B x C
         sf = self.downsample_factor
-    
-        assert downsampling_mask is not None
-
-        if downsampling_mask is not None:
-            # Downsample mask is of shape B x T x ShortenedRepresentations
-            # pdb.set_trace()
-            shortened_x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
-            shortened_x = torch.cat([self.leftmost_group.repeat(1, x.size(1), 1), shortened_x], dim=0)
-            return shortened_x
-
-        assert False
 
         if mems is not None and mems.numel() > 0:
+            assert False, 'currently not supported'
             last_mems = mems[-1] # Outputs of the first stack of vanillas
             assert last_mems.size(0) > (sf - 1)
             x = torch.cat([last_mems[-(sf - 1):], x], dim = 0)
         else:
-            padding = torch.zeros((sf - 1, x.size(1), x.size(2))).to(x.device)
-            x = torch.cat([padding, x], dim = 0)
+            if self.mode == 'linear' or self.mode == 'naive':
+                x = torch.cat([self.leftmost_group.repeat(1, x.size(1) ,1), x], dim = 0)
 
         if x.size(0) % sf > 0:
-            # Hack to prevent destroing the tensor when T is divisible by sf
+            # Hack to prevent destroying the tensor when T is divisible by sf
             x = x[:-(x.size(0) % sf)]
 
-        assert x.size(0) % self.downsample_factor == 0, \
+        assert x.size(0) % sf == 0, \
             'tgt_len not divisible by sf'
 
         # T x B x C
@@ -353,16 +350,22 @@ class Downsampler(nn.Module):
             x = x.transpose(0, 1)
             x = x.reshape(
                 x.size(0), 
-                x.size(1) // self.downsample_factor, 
-                x.size(2) * self.downsample_factor
+                x.size(1) // sf, 
+                x.size(2) * sf 
             )
             x = self.downsample_layer(x)
             x = x.transpose(0, 1)
-        else:
+        elif self.mode == 'naive':
             # T x B x C -> B x T x C -> B x C x T
             x = x.transpose(0, 1).transpose(1, 2)
             x = self.downsample_layer(x)
             x = x.transpose(1, 2).transpose(0, 1)
+        elif self.mode == 'custom':
+            assert downsampling_mask is not None
+            x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
+            x = torch.cat(
+                [self.leftmost_group.repeat(1, x.size(1), 1), shortened_x], dim=0
+            )
 
         return x 
 
@@ -444,7 +447,7 @@ class MemTransformerLM(nn.Module):
         else:
             print(f'You are using funnel in config {funnel_config}')
             assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
-            assert funnel_resample == 'naive', 'Linear is not good for LM'
+            self.funnel_mode = funnel_resample
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
                 Downsampler(
@@ -634,8 +637,11 @@ class MemTransformerLM(nn.Module):
         # therefore we use actual length of a batch and not args.tgt_len
         tgt_len = target.size(0)
 
-        # Create masks
-        downsampling_mask, upsampling_mask = self.create_masks(data)
+        # Create masks if custom downsampling/upsampling
+        if getattr(self, 'funnel_mode', None) == 'custom':
+            downsampling_mask, upsampling_mask = self.create_masks(data)
+        else:
+            downsampling_mask, upsampling_mask = None, None
 
         # Token_ids to vector embeddings
         word_emb = self.word_emb(data) # T x B x C
