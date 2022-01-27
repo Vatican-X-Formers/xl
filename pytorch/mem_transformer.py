@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
-
+import pdb
 
 @torch.jit.script
 def add_and_scale(tensor1, tensor2, alpha: float):
@@ -273,8 +273,17 @@ class Upsampler(nn.Module):
         if mode == 'linear':
             self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
     
-    def forward(self, x, residual):
+    def forward(self, x, residual, upsampling_mask = None):
         # T x B x C
+        # pdb.set_trace()
+        assert upsampling_mask is not None
+        x = x.transpose(0, 1)
+        upsampled_x = torch.gather(x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, 512))
+        upsampled_x = upsampled_x.transpose(0, 1)
+        assert upsampled_x.size() == residual.size()
+        return self.ln(upsampled_x) + residual
+        assert False
+
         if self.mode == 'linear':
             # T x B x C -> B x T x C
             x = x.transpose(0, 1)
@@ -295,6 +304,7 @@ class Downsampler(nn.Module):
     def __init__(self, embedding_dim, downsample_factor, mode='linear'):
         super().__init__()
         self.mode = mode
+        self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
         self.downsample_factor = downsample_factor
         if mode == 'linear':
             self.downsample_layer = nn.Linear(
@@ -307,9 +317,20 @@ class Downsampler(nn.Module):
                 stride = downsample_factor
             )
     
-    def forward(self, x, mems):
+    def forward(self, x, mems, downsampling_mask = None):
         # Input is of shape T x B x C
         sf = self.downsample_factor
+    
+        assert downsampling_mask is not None
+
+        if downsampling_mask is not None:
+            # Downsample mask is of shape B x T x ShortenedRepresentations
+            # pdb.set_trace()
+            shortened_x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
+            shortened_x = torch.cat([self.leftmost_group.repeat(1, x.size(1), 1), shortened_x], dim=0)
+            return shortened_x
+
+        assert False
 
         if mems is not None and mems.numel() > 0:
             last_mems = mems[-1] # Outputs of the first stack of vanillas
@@ -575,9 +596,6 @@ class MemTransformerLM(nn.Module):
 
         data = data.transpose(0, 1)
 
-        import pdb
-        pdb.set_trace()
-        
         boundaries = data == 0
         boundaries[:, 0] = True
         n_segments = boundaries.sum(-1)
@@ -599,11 +617,11 @@ class MemTransformerLM(nn.Module):
         final = torch.zeros_like(foo)
         final[foo == 0] = 1
         final = final / (final.sum(1, keepdim=True) + 1e-9)
-        downsample_mask = final
+        downsampling_mask = final
 
         data = data.transpose(0, 1)
 
-        return downsample_mask, upsample_mask
+        return downsampling_mask, upsample_mask
 
 
     def forward(self, data, target, mems):
@@ -617,7 +635,7 @@ class MemTransformerLM(nn.Module):
         tgt_len = target.size(0)
 
         # Create masks
-        downsample_mask, upsample_mask = self.create_masks(data)
+        downsampling_mask, upsampling_mask = self.create_masks(data)
 
         # Token_ids to vector embeddings
         word_emb = self.word_emb(data) # T x B x C
@@ -639,11 +657,11 @@ class MemTransformerLM(nn.Module):
                 # We take the last hids which are the final outputs of decoder stack before shortening
                 # We also make sure to take last tgt_len elements as these are the actual outputs
                 # residual_mems_id = mems_index - 2 # -1 are hids from funnel, -2 are from before shortening
-                hidden = layers(hidden, residual=residual)
+                hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
                 residual = hidden
-                hidden = layers(hidden, mems[0] if mems is not None else None)
+                hidden = layers(hidden, mems[0] if mems is not None else None, downsampling_mask=downsampling_mask)
                 current_sf *= layers.downsample_factor
             else:
                 hidden, new_mem = self._forward(
