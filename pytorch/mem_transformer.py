@@ -565,6 +565,46 @@ class MemTransformerLM(nn.Module):
 
         return core_out, new_mems
 
+    def create_masks(self, data, boundary_id = 0):
+        # Assumptions:
+        # Nothing is done in data loader, input to the mask creation is raw data, the sequence of token ids
+        # Besides the raw data I know the token id of a space
+        # The first group would consists of a trainable vector that would be a part of downsampler class, therefore we have number_of_boundaries + 1 downsampled groups
+
+        # The function here assumes the data to be of shape [batch, seq_len], however it is of shape [seq_len, batch]. As a result we start and finish with transose
+
+        data = data.transpose(0, 1)
+
+        import pdb
+        pdb.set_trace()
+        
+        boundaries = data == 0
+        boundaries[:, 0] = True
+        n_segments = boundaries.sum(-1)
+
+        mask = torch.zeros_like(data)
+        mask[boundaries] = 1
+        
+        # Upsample mask creation
+        ids = boundaries[:, 1:].nonzero(as_tuple=True)
+        batch_ids, elems_ids = ids
+        upsample_mask = mask.cumsum(-1) - 1
+        upsample_mask[(batch_ids, elems_ids)] += 1
+        upsample_mask[:, -1] += 1
+        
+        # Downsample mask creation
+        maximum_segment = n_segments.max()
+        tmp = torch.zeros_like(data).unsqueeze(2) + torch.arange(1, maximum_segment + 1, 1, device = data.device)
+        foo = tmp - mask.cumsum(1).unsqueeze(-1)
+        final = torch.zeros_like(foo)
+        final[foo == 0] = 1
+        final = final / (final.sum(1, keepdim=True) + 1e-9)
+        downsample_mask = final
+
+        data = data.transpose(0, 1)
+
+        return downsample_mask, upsample_mask
+
 
     def forward(self, data, target, mems):
         # Data and target are of size T x B
@@ -575,6 +615,9 @@ class MemTransformerLM(nn.Module):
         # the last batch could be leftover and could be shorter
         # therefore we use actual length of a batch and not args.tgt_len
         tgt_len = target.size(0)
+
+        # Create masks
+        downsample_mask, upsample_mask = self.create_masks(data)
 
         # Token_ids to vector embeddings
         word_emb = self.word_emb(data) # T x B x C
@@ -677,3 +720,4 @@ if __name__ == '__main__':
     mems = None
     for idx, (inp, tgt, seqlen, _) in enumerate(diter):
         _, mems = model(inp, tgt, mems)
+  
