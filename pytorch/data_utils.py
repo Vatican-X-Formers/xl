@@ -23,7 +23,6 @@ import torch
 import utils
 from utils.vocabulary import OpenAIVocab
 from utils.vocabulary import Vocab
-import pdb
 
 
 class LMOrderedIterator(object):
@@ -41,9 +40,6 @@ class LMOrderedIterator(object):
 
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = data.size(0) // bsz
-
-        import pdb
-        pdb.set_trace()
 
         # print('in data iterator')
         # print(len(data))
@@ -159,7 +155,6 @@ class Corpus(object):
             # the vocab will load from file when build_vocab() is called
 
         self.vocab.build_vocab()
-        pdb.set_trace()
 
         if self.dataset in ['ptb', 'wt2', 'wt103']:
             self.train = self.vocab.encode_file(
@@ -211,8 +206,6 @@ def get_lm_corpus(datadir, dataset, vocab):
     if os.path.exists(fn) and False:
         logging.info('Loading cached dataset...')
         corpus = torch.load(fn)
-        import pdb
-        pdb.set_trace()
     else:
         logging.info('Producing dataset {}...'.format(dataset))
         kwargs = {}
