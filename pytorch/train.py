@@ -378,6 +378,9 @@ def weights_init(m, args):
             init_weight(m.weight, args)
         if hasattr(m, 'bias') and m.bias is not None:
             init_bias(m.bias)
+    elif classname.find('Downsampler') != -1:
+        if hasattr(m, 'leftmost_group'):
+            init_weight(m.leftmost_group, args)
     elif classname.find('AdaptiveEmbedding') != -1:
         if hasattr(m, 'emb_projs'):
             for i in range(len(m.emb_projs)):

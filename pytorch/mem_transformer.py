@@ -396,8 +396,8 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, div_val=div_val)
-        # self.word_emb = nn.Embedding(n_token, d_model)
+        #self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, div_val=div_val)
+        self.word_emb = nn.Embedding(n_token, d_model)
         self.drop = nn.Dropout(dropout)
 
         # Relative attention specific parameters
@@ -433,6 +433,7 @@ class MemTransformerLM(nn.Module):
 
             return layers
 
+        self.pre_lnorm = pre_lnorm
         # assert pre_lnorm == True, 'We mimic Trax setup with pre_lnorm'
         pre_layers, (funnel_layers, shorten_factor), post_layers = eval(funnel_config)
         assert funnel_resample in ['linear', 'naive', 'custom'], \
@@ -466,22 +467,21 @@ class MemTransformerLM(nn.Module):
 
         self.sample_softmax = sample_softmax
         assert sample_softmax <= 0
+        if False:
+            if tie_weight:
+                emb_layers = [i.weight for i in self.word_emb.emb_layers]
+            else:
+                emb_layers = None
 
-        if tie_weight:
-            emb_layers = [i.weight for i in self.word_emb.emb_layers]
-        else:
-            emb_layers = None
+            emb_projs = self.word_emb.emb_projs
 
-        emb_projs = self.word_emb.emb_projs
-
-        self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-                                                cutoffs, div_val=div_val,
-                                                tie_projs=tie_projs,
-                                                out_projs=emb_projs,
-                                                out_layers_weights=emb_layers)
-
-        # self.final_cast = nn.Linear(d_model, n_token)
-        # self.crit = torch.nn.CrossEntropyLoss(reduction='none')
+            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
+                                                        cutoffs, div_val=div_val,
+                                                        tie_projs=tie_projs,
+                                                        out_projs=emb_projs,
+                                                        out_layers_weights=emb_layers)
+        self.final_cast = nn.Linear(d_model, n_token)
+        self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
         self.clamp_len = clamp_len       
@@ -621,7 +621,6 @@ class MemTransformerLM(nn.Module):
         final[foo == 0] = 1
         final = final / (final.sum(1, keepdim=True) + 1e-9)
         downsampling_mask = final
-
         data = data.transpose(0, 1)
 
         return downsampling_mask, upsample_mask
@@ -677,7 +676,8 @@ class MemTransformerLM(nn.Module):
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,
                 )
-                hidden = self.layer_norms[mems_index](hidden)
+                if self.pre_lnorm:
+                    hidden = self.layer_norms[mems_index](hidden)
                 new_mems.append(new_mem)
                 mems_index += 1
 
@@ -687,7 +687,8 @@ class MemTransformerLM(nn.Module):
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
-        # hidden = self.final_cast(hidden)
+        hidden = self.final_cast(hidden)
+        # pdb.set_trace()
         loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
         loss = loss.view(tgt_len, -1)
 
