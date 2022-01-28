@@ -203,7 +203,7 @@ def get_lm_corpus(datadir, dataset, vocab):
     else:
         raise RuntimeError('Unsupported vocab')
 
-    if os.path.exists(fn) and False:
+    if os.path.exists(fn):
         logging.info('Loading cached dataset...')
         corpus = torch.load(fn)
     else:
