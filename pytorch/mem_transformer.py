@@ -634,7 +634,8 @@ class MemTransformerLM(nn.Module):
         # Data loader serves most batches of length args.tgt_len but
         # the last batch could be leftover and could be shorter
         # therefore we use actual length of a batch and not args.tgt_len
-        tgt_len = target.size(0)
+        # tgt_len = target.size(0)
+        tgt_len = data.size(0)
 
         # Create masks if custom downsampling/upsampling
         if getattr(self, 'funnel_mode', None) == 'custom':
@@ -689,10 +690,12 @@ class MemTransformerLM(nn.Module):
         # Then take the value corresponding only to our target
         hidden = self.final_cast(hidden)
         # pdb.set_trace()
-        loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
-        loss = loss.view(tgt_len, -1)
-
-        return (loss, new_mems)
+        if target != None:
+            loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
+            loss = loss.view(tgt_len, -1)
+            return (loss, new_mems)
+        else:
+            return hidden
 
 
 if __name__ == '__main__':
