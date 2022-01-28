@@ -718,11 +718,11 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 best_val_loss = val_loss
                 is_best = True
 
-            # if not args.debug:
-            #     save_checkpoint(args, model, model_config, optimizer, scheduler,
-            #                     scaler, vocab, epoch, batch, last_iter,
-            #                     train_step, best_val_loss, is_best,
-            #                     args.work_dir)
+            if not args.debug:
+                save_checkpoint(args, model, model_config, optimizer, scheduler,
+                                scaler, vocab, epoch, batch, last_iter,
+                                train_step, best_val_loss, is_best,
+                                args.work_dir)
 
             # dev-performance based learning rate annealing
             # if args.scheduler == 'dev_perf':
