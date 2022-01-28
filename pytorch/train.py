@@ -457,7 +457,8 @@ def sample_generation(vocab, model, args):
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
                 logits = model(data, target, mems)
-                next_index = torch.nn.functional.softmax(logits[-1, -1, :], dim = 0).cpu().multinomial(num_samples=1, replacement=True).item()
+                # next_index = torch.nn.functional.softmax(logits[-1, -1, :], dim = 0).cpu().multinomial(num_samples=1, replacement=True).item()
+                next_index = logits[-1, -1, :].argmax().cpu().item()
                 generated_sequence.append(next_index)
 
     model.reset_length(tgt_len=args.tgt_len,
