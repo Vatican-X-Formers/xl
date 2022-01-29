@@ -30,7 +30,7 @@ train: &train
   funnel_config: "[2, (8, 3), 2]"
   funnel_resample: naive
   pre_lnorm: true
-  roll: true
+  activation_function: gelu
 
 eval: &eval
   <<: *enwik8

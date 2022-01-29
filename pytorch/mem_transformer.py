@@ -29,16 +29,21 @@ class PositionalEmbedding(nn.Module):
 
 
 class PositionwiseFF(nn.Module):
-    def __init__(self, d_model, d_inner, dropout, pre_lnorm=False):
+    def __init__(self, d_model, d_inner, dropout, pre_lnorm=False, activation_function='relu'):
         super(PositionwiseFF, self).__init__()
 
         self.d_model = d_model
         self.d_inner = d_inner
         self.dropout = dropout
 
+        if activation_function == 'relu':
+            activation_fn = nn.ReLU(inplace=True)
+        elif activation_function == 'gelu':
+            activation_fn = torch.nn.GELU()
+
         self.CoreNet = nn.Sequential(
             nn.Linear(d_model, d_inner), 
-            nn.ReLU(inplace=True),
+            activation_fn,
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
             nn.Dropout(dropout),
@@ -66,8 +71,11 @@ class PositionwiseFF(nn.Module):
 
 class RelPartialLearnableMultiHeadAttn(nn.Module):
     def __init__(self, n_head, d_model, d_head, dropout, dropatt=0,
-                tgt_len=None, ext_len=None, mem_len=None, pre_lnorm=False):
+                tgt_len=None, ext_len=None, mem_len=None, pre_lnorm=False,
+                activation_function='None'):
         super(RelPartialLearnableMultiHeadAttn, self).__init__()
+    
+        del activation_function
 
         self.n_head = n_head
         self.d_model = d_model
@@ -186,7 +194,10 @@ class RelPartialLearnableDecoderLayer(nn.Module):
         self.dec_attn = RelPartialLearnableMultiHeadAttn(n_head, d_model,
                                                          d_head, dropout,
                                                          **kwargs)
-        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, pre_lnorm=kwargs.get('pre_lnorm'))
+        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, 
+                                     pre_lnorm=kwargs.get('pre_lnorm'),
+                                     activation_function=kwargs.get('activation_function')
+                                     )
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
         output = self.dec_attn(dec_inp, r, r_w_bias, r_r_bias,
@@ -379,14 +390,8 @@ class MemTransformerLM(nn.Module):
                  same_length=False, attn_type=0, clamp_len=-1,
                  sample_softmax=-1,
                  funnel_config="[3, (1, 2) ,3]", 
-                 funnel_resample='naive'):
-        # TODO: The loss is crazy fucking big, maybe do some better initialization?
-        # Let's try initialization using xavier uniform, maybe something like in 
-        # wav2vec2 from fairseq or Transformer LS
-        # TODO: W train.py jest funkcja init_weights, ale wyprintuj ją zeby sprawdzic
-        # czy ona się rzeczywiście uruchamia i inicjalizuje poprawnie wszystkie klasy
-        # TODO: Przejdz przez model i zastanow sie czy warto wjebac jakies ln
-        # Aczkolwiek robiłem to juz wiele razy w implementacji traxa i to jest raczej std
+                 funnel_resample='naive',
+                 activation_function='relu'):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -396,7 +401,6 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        #self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, div_val=div_val)
         self.word_emb = nn.Embedding(n_token, d_model)
         self.drop = nn.Dropout(dropout)
 
@@ -418,6 +422,7 @@ class MemTransformerLM(nn.Module):
         # It is very important shit, we don't support that
         assert self.ext_len == 0
 
+        self.pre_lnorm = pre_lnorm
         self.layer_norms = nn.ModuleList([
             nn.LayerNorm(d_model) for _ in range(3)
         ])
@@ -427,14 +432,13 @@ class MemTransformerLM(nn.Module):
                 RelPartialLearnableDecoderLayer(
                         n_head, d_model, d_head, d_inner, dropout,
                         tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
-                        dropatt=dropatt, pre_lnorm=pre_lnorm)
+                        dropatt=dropatt, pre_lnorm=pre_lnorm,
+                        activation_function=activation_function)
                 for _ in range(n_layers)
             ])
 
             return layers
 
-        self.pre_lnorm = pre_lnorm
-        # assert pre_lnorm == True, 'We mimic Trax setup with pre_lnorm'
         pre_layers, (funnel_layers, shorten_factor), post_layers = eval(funnel_config)
         assert funnel_resample in ['linear', 'naive', 'custom'], \
                     'Now we only support two upsampling/downsampling methods'
@@ -447,7 +451,9 @@ class MemTransformerLM(nn.Module):
             ])
         else:
             print(f'You are using funnel in config {funnel_config}')
-            # assert funnel_layers > 0 and post_layers == pre_layers and shorten_factor > 1
+            assert funnel_layers > 0
+            assert post_layers == pre_layers, 'Our model is symmetric'
+            assert shorten_factor > 1 or funnel_resample == 'custom'
             self.funnel_mode = funnel_resample
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
@@ -465,21 +471,6 @@ class MemTransformerLM(nn.Module):
                 create_decoder_layers(post_layers),
             ])
 
-        self.sample_softmax = sample_softmax
-        assert sample_softmax <= 0
-        if False:
-            if tie_weight:
-                emb_layers = [i.weight for i in self.word_emb.emb_layers]
-            else:
-                emb_layers = None
-
-            emb_projs = self.word_emb.emb_projs
-
-            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-                                                        cutoffs, div_val=div_val,
-                                                        tie_projs=tie_projs,
-                                                        out_projs=emb_projs,
-                                                        out_layers_weights=emb_layers)
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
@@ -545,6 +536,9 @@ class MemTransformerLM(nn.Module):
         klen = mlen + qlen
 
         if self.same_length:
+            # By default we cheat a little bit as some tokens have more context
+            # than the others. For example 100th token sees 99 tokens while 10th sees 9.
+            # This branch, if enabled, ensures that all tokens has access to the same amount of tokens
             all_ones = core_input.new_ones(qlen, klen)
             mask_len = klen - mem_len - 1
             if mask_len > 0:
@@ -562,9 +556,8 @@ class MemTransformerLM(nn.Module):
         pos_seq = torch.arange(klen-1, -1, -1.0, device=core_input.device,
                                 dtype=core_input.dtype)
 
-        # This is used only during inference, as during inference we use
-        # quite longer sequences than during training as we don't have to store activations
-        # Difference is somewhere in between 1k during training vs 2k during eval
+        # This is used only during inference, as during inference we can use
+        # longer sequences than during training as we don't have to store activations.
         if clamp_len > 0:
             pos_seq.clamp_(max=clamp_len)
 
@@ -583,8 +576,6 @@ class MemTransformerLM(nn.Module):
                 dec_attn_mask=dec_attn_mask, mems=mems_i
             )
 
-        # We also want to store the output of last layer in memory
-        # hids.append(core_out.detach())
         new_mems = self._update_mems(hids, mems, qlen, mlen, mem_len)
 
         return core_out, new_mems
@@ -596,7 +587,6 @@ class MemTransformerLM(nn.Module):
         # The first group would consists of a trainable vector that would be a part of downsampler class, therefore we have number_of_boundaries + 1 downsampled groups
 
         # The function here assumes the data to be of shape [batch, seq_len], however it is of shape [seq_len, batch]. As a result we start and finish with transose
-
         data = data.transpose(0, 1)
 
         boundaries = data == 0
@@ -607,11 +597,7 @@ class MemTransformerLM(nn.Module):
         mask[boundaries] = 1
         
         # Upsample mask creation
-        # ids = boundaries[:, 1:].nonzero(as_tuple=True)
-        # batch_ids, elems_ids = ids
         upsample_mask = mask.cumsum(-1) - 1
-        # upsample_mask[(batch_ids, elems_ids)] += 1
-        # upsample_mask[:, -1] += 1
         
         # Downsample mask creation
         maximum_segment = n_segments.max()
@@ -682,19 +668,17 @@ class MemTransformerLM(nn.Module):
                 new_mems.append(new_mem)
                 mems_index += 1
 
-        # We comment this out, there is no such thing in Trax
-        # hidden = self.drop(hidden) # Final dropout
-
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
         hidden = self.final_cast(hidden)
-        # pdb.set_trace()
-        if target != None:
+        if self.training:
+            assert target is not None
             loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
             loss = loss.view(tgt_len, -1)
             return (loss, new_mems)
         else:
+            # Generation mode, we return raw logits
             return hidden
 
 

@@ -171,7 +171,7 @@ class Corpus(object):
             self.test = self.vocab.encode_file(
                 os.path.join(path, 'test.txt'), ordered=True, add_eos=True)
         elif self.dataset in ['text8']:
-            # There are no linebreaks on text8
+            # There are no linebreaks on text8 so it doesn't matter if we use add_eos
             self.train = self.vocab.encode_file(
                 os.path.join(path, 'train.txt'), ordered=True, add_eos=False)
             self.valid = self.vocab.encode_file(

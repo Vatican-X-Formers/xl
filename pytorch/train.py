@@ -182,6 +182,7 @@ def parse_args():
     model.add_argument('--funnel_config', type=str, default="[3, (8, 3) ,3]",
         help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
+    model.add_argument('--activation_function', type=str, default='relu', help='')
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -879,6 +880,7 @@ def main():
         'sample_softmax': args.sample_softmax,
         'funnel_config': args.funnel_config,
         'funnel_resample': args.funnel_resample,
+        'activation_function': args.activation_function
         }
     if rank == 0:
         global run
