@@ -607,11 +607,11 @@ class MemTransformerLM(nn.Module):
         mask[boundaries] = 1
         
         # Upsample mask creation
-        ids = boundaries[:, 1:].nonzero(as_tuple=True)
-        batch_ids, elems_ids = ids
+        # ids = boundaries[:, 1:].nonzero(as_tuple=True)
+        # batch_ids, elems_ids = ids
         upsample_mask = mask.cumsum(-1) - 1
-        upsample_mask[(batch_ids, elems_ids)] += 1
-        upsample_mask[:, -1] += 1
+        # upsample_mask[(batch_ids, elems_ids)] += 1
+        # upsample_mask[:, -1] += 1
         
         # Downsample mask creation
         maximum_segment = n_segments.max()
