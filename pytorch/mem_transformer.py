@@ -391,7 +391,8 @@ class MemTransformerLM(nn.Module):
                  sample_softmax=-1,
                  funnel_config="[3, (1, 2) ,3]", 
                  funnel_resample='naive',
-                 activation_function='relu'):
+                 activation_function='relu',
+                 gather_stats=['shortened_length']):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -476,6 +477,7 @@ class MemTransformerLM(nn.Module):
 
         self.same_length = same_length
         self.clamp_len = clamp_len       
+        self.gather_stats = gather_stats
 
     def reset_length(self, tgt_len, ext_len, mem_len):
         if tgt_len < 1:
@@ -613,6 +615,9 @@ class MemTransformerLM(nn.Module):
 
 
     def forward(self, data, target, mems):
+        # I can keep track of training stats and log them
+        stats = {}
+
         # Data and target are of size T x B
         if mems is None:
             mems = self.init_mems() 
@@ -629,6 +634,9 @@ class MemTransformerLM(nn.Module):
         else:
             downsampling_mask, upsampling_mask = None, None
 
+        if 'shortened_length' in self.gather_stats:
+            stats['shortened_length'] = downsampling_mask.size(2)
+        
         # Token_ids to vector embeddings
         word_emb = self.word_emb(data) # T x B x C
         hidden = self.drop(word_emb)
@@ -672,11 +680,10 @@ class MemTransformerLM(nn.Module):
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
         hidden = self.final_cast(hidden)
-        if self.training:
-            assert target is not None
+        if self.training or target is not None:
             loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
             loss = loss.view(tgt_len, -1)
-            return (loss, new_mems)
+            return loss, new_mems, stats
         else:
             # Generation mode, we return raw logits
             return hidden
