@@ -45,8 +45,8 @@ cd data
 #    cd ..
 #fi
 #
-echo "- Downloading WikiText-103 (WT2)"
 if [[ ! -d 'wikitext-103' ]]; then
+    echo "- Downloading WikiText-103 (WT2)"
     wget --continue https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-103-v1.zip
     unzip -q wikitext-103-v1.zip
     cd wikitext-103
@@ -56,8 +56,8 @@ if [[ ! -d 'wikitext-103' ]]; then
     cd ..
 fi
 
-echo "- Downloading enwik8 (Character)"
 if [[ ! -d 'enwik8' ]]; then
+   echo "- Downloading enwik8 (Character)"
    mkdir -p enwik8
    cd enwik8
    wget --continue http://mattmahoney.net/dc/enwik8.zip
@@ -66,8 +66,8 @@ if [[ ! -d 'enwik8' ]]; then
    cd ..
 fi
 
-echo "- Downloading text8 (Character)"
 if [[ ! -d 'text8' ]]; then
+   echo "- Downloading text8 (Character)"
    mkdir -p text8
    cd text8
    wget --continue http://mattmahoney.net/dc/text8.zip
