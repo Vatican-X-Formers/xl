@@ -1,1 +1,0 @@
-bash train.sh ../configs/text8.yaml $1
