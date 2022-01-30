@@ -24,6 +24,7 @@ import shutil
 import sys
 import time
 import warnings
+from collections import defaultdict
 
 import dllogger
 import numpy as np
@@ -451,15 +452,15 @@ def sample_generation(vocab, model, args):
     generated_sequence = [0]
 
     with torch.no_grad():
-        for i in range(100):
+        for i in range(200):
             mems, target = None, None
             data = torch.tensor(generated_sequence).unsqueeze(0).cuda()
 
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
                 logits = model(data, target, mems)
-                # next_index = torch.nn.functional.softmax(logits[-1, -1, :], dim = 0).cpu().multinomial(num_samples=1, replacement=True).item()
-                next_index = logits[-1, -1, :].argmax().cpu().item()
+                next_index = torch.nn.functional.softmax(logits[-1, -1, :] / 0.5, dim = 0).cpu().multinomial(num_samples=1, replacement=True).item()
+                # next_index = logits[-1, -1, :].argmax().cpu().item()
                 generated_sequence.append(next_index)
 
     model.reset_length(tgt_len=args.tgt_len,
@@ -524,7 +525,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
 
     enable_autocast = args.fp16 and args.amp == 'pytorch'
     with torch.cuda.amp.autocast(enable_autocast):
-        loss, mems[i] = model(data_i, target_i, mems[i])
+        loss, mems[i], stats = model(data_i, target_i, mems[i])
         loss = loss.float().mean().type_as(loss) / args.batch_chunk
 
     if args.swap_mem and mems[i] is not None:
@@ -540,7 +541,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
         loss.backward()
 
     train_loss = loss.float().item()
-    return train_loss
+    return train_loss, stats
 
 
 def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
@@ -553,6 +554,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     train_loss = 0
     target_tokens = 0
     log_step = 0
+    stats_agg = defaultdict(list)
     log_start_time = time.time()
 
     mems = [None for _ in range(args.batch_chunk)]
@@ -571,17 +573,36 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         for i in range(args.batch_chunk):
             if i < args.batch_chunk - 1 and isinstance(para_model, DistributedDataParallel):
                 with para_model.no_sync():
-                    train_loss_chunk = train_iteration(
+                    train_loss_chunk, stats = train_iteration(
                         para_model, i, mems, data_chunks, target_chunks, scaler,
                         optimizer, device, True, args
                     )
             else:
-                train_loss_chunk = train_iteration(
+                train_loss_chunk, stats = train_iteration(
                     para_model, i, mems, data_chunks, target_chunks, scaler,
                     optimizer, device, False, args
                 )
 
             train_loss += train_loss_chunk
+
+        for k,v in stats.items():
+            stats_agg[k].append(v)
+
+        #total_grad_l2 = 0
+        #total_weight_l2 = 0
+
+        #for name, p in model.named_parameters():
+         #   weights_l2 = p.detach().norm(2)
+          #  total_weight_l2 += weights_l2.item() ** 2
+         #   if p.grad == None:
+          #      import pdb
+           #     pdb.set_trace()
+            #grad_l2 = p.grad.detach().data.norm(2)
+            #total_grad_l2 += grad_l2.item() ** 2
+        #import pdb
+        #pdb.set_trace()
+        stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+        stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
 
         if args.fp16:
             if args.amp == 'pytorch':
@@ -619,7 +640,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             if scheduler_sparse:
                 scheduler_sparse.step(train_step)
 
-        if train_step % args.log_interval == 0:
+        if train_step % args.log_interval == 0 or train_step == 1:
             cur_loss = train_loss / log_step
             cur_loss = utils.distributed.all_reduce_item(cur_loss, op='mean')
             train_loss = 0
@@ -652,6 +673,9 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 run['lr'].log(lr, step=train_step)
                 run['train/loss'].log(cur_loss, step=train_step)
                 run['tokens_per_sec'].log(throughput, step=train_step)
+                for k, v in stats_agg.items():
+                    run[k].log(np.array(v).mean(), step=train_step)
+                stats_agg = defaultdict(list)
 
             dllogger_data = {
                 'epoch': epoch,
@@ -676,7 +700,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
 
-        if run and train_step % 500 == 0:
+        if run and train_step % 50 == 0:
             xd = sample_generation(vocab, model, args)
             run['gen/text'].log(xd)
 

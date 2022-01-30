@@ -424,9 +424,10 @@ class MemTransformerLM(nn.Module):
         assert self.ext_len == 0
 
         self.pre_lnorm = pre_lnorm
-        self.layer_norms = nn.ModuleList([
-            nn.LayerNorm(d_model) for _ in range(3)
-        ])
+        if self.pre_lnorm:
+            self.layer_norms = nn.ModuleList([
+                nn.LayerNorm(d_model) for _ in range(3)
+            ])
 
         def create_decoder_layers(n_layers):
             layers = nn.ModuleList([
@@ -477,6 +478,9 @@ class MemTransformerLM(nn.Module):
 
         self.same_length = same_length
         self.clamp_len = clamp_len       
+        # Remember that this stats should be elementwise and not batch_agg
+        # These stats, e.g. shortened_length, depend on the batch size
+        # As we take maximum shortened_length from the batch - take care
         self.gather_stats = gather_stats
 
     def reset_length(self, tgt_len, ext_len, mem_len):
@@ -631,12 +635,11 @@ class MemTransformerLM(nn.Module):
         # Create masks if custom downsampling/upsampling
         if getattr(self, 'funnel_mode', None) == 'custom':
             downsampling_mask, upsampling_mask = self.create_masks(data)
+            if 'shortened_length' in self.gather_stats:
+                stats['shortened_length'] = downsampling_mask.size(2)
         else:
             downsampling_mask, upsampling_mask = None, None
 
-        if 'shortened_length' in self.gather_stats:
-            stats['shortened_length'] = downsampling_mask.size(2)
-        
         # Token_ids to vector embeddings
         word_emb = self.word_emb(data) # T x B x C
         hidden = self.drop(word_emb)
