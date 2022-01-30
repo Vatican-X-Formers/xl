@@ -700,7 +700,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
 
-        if run and train_step % 50 == 0:
+        if run and train_step % 1500 == 0:
             xd = sample_generation(vocab, model, args)
             run['gen/text'].log(xd)
 
