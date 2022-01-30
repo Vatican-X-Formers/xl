@@ -497,7 +497,7 @@ def evaluate(eval_iter, model, args):
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                loss, mems = model(data, target, mems)
+                loss, mems, _ = model(data, target, mems)
                 loss = loss.float().mean().type_as(loss)
             if warm:
                 # assert (mems is None) or mems.size(1) == model.mem_len
