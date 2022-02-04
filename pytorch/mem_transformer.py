@@ -311,7 +311,7 @@ class Upsampler(nn.Module):
 
 
 class Downsampler(nn.Module):
-    def __init__(self, embedding_dim, downsample_factor, mode='linear'):
+    def __init__(self, embedding_dim, downsample_factor, mode='linear', old_checkpoint=False):
         super().__init__()
         self.mode = mode
         self.downsample_factor = downsample_factor
@@ -320,19 +320,22 @@ class Downsampler(nn.Module):
                 embedding_dim * downsample_factor, 
                 embedding_dim
             )
-            self.leftmost_group = nn.Parameter(
-                torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
-            )
         elif mode == 'naive':
             self.downsample_layer = nn.AvgPool1d(
                 kernel_size = downsample_factor, 
                 stride = downsample_factor
             )
-            self.leftmost_group = nn.Parameter(
-                torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
-            )
         elif mode == 'custom':
             assert self.downsample_factor == 1, 'Just a special requirement of using custom mode'
+
+        if mode in ['naive', 'linear']:
+            if old_checkpoint:
+                self.leftmost_group = torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
+            else:
+                self.leftmost_group = nn.Parameter(
+                    torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
+                )
+        else:
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
     
     def forward(self, x, mems = None, downsampling_mask = None):
@@ -392,7 +395,8 @@ class MemTransformerLM(nn.Module):
                  funnel_config="[3, (1, 2) ,3]", 
                  funnel_resample='naive',
                  activation_function='relu',
-                 gather_stats=['shortened_length']):
+                 gather_stats=['shortened_length'],
+                 old_checkpoint=False):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -402,7 +406,12 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        self.word_emb = nn.Embedding(n_token, d_model)
+        if old_checkpoint:
+            self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs,
+                                              div_val=div_val)
+        else:
+            self.word_emb = nn.Embedding(n_token, d_model)
+       
         self.drop = nn.Dropout(dropout)
 
         # Relative attention specific parameters
@@ -462,7 +471,8 @@ class MemTransformerLM(nn.Module):
                 Downsampler(
                     embedding_dim=d_model,
                     downsample_factor=shorten_factor,
-                    mode=funnel_resample
+                    mode=funnel_resample,
+                    old_checkpoint=old_checkpoint
                 ),
                 create_decoder_layers(funnel_layers),
                 Upsampler(
@@ -473,8 +483,23 @@ class MemTransformerLM(nn.Module):
                 create_decoder_layers(post_layers),
             ])
 
-        self.final_cast = nn.Linear(d_model, n_token)
-        self.crit = torch.nn.CrossEntropyLoss(reduction='none')
+        self.old_checkpoint = old_checkpoint
+
+        if old_checkpoint:
+            if tie_weight:
+                emb_layers = [i.weight for i in self.word_emb.emb_layers]
+            else:
+                emb_layers = None
+
+            emb_projs = self.word_emb.emb_projs
+            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
+                                                    cutoffs, div_val=div_val,
+                                                    tie_projs=tie_projs,
+                                                    out_projs=emb_projs,
+                                                    out_layers_weights=emb_layers)
+        else:
+            self.final_cast = nn.Linear(d_model, n_token)
+            self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
         self.clamp_len = clamp_len       
@@ -682,14 +707,28 @@ class MemTransformerLM(nn.Module):
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
-        hidden = self.final_cast(hidden)
+
+        if getattr(self, 'final_cast', None) is not None: 
+            logit = self.final_cast(hidden)
+        else:
+            logit = self.crit._compute_logit(hidden, self.crit.out_layers_weights[0], self.crit.out_layers_biases[0], self.crit.get_out_proj(0))
+
         if self.training or target is not None:
-            loss = self.crit(hidden.view(-1, hidden.size(-1)), target.view(-1))
-            loss = loss.view(tgt_len, -1)
+            # T x B x C
+            assert hidden.size(0) == target.size(0)
+            logit = logit.view(-1, logit.size(-1))
+            target = target.view(-1)
+
+            if self.old_checkpoint:
+                loss = -F.log_softmax(logit, dim=-1).gather(1, target.unsqueeze(1)).squeeze(1)
+            else:
+                loss = self.crit(logit, target)
+                loss = loss.view(tgt_len, -1)
+
             return loss, new_mems, stats
         else:
             # Generation mode, we return raw logits
-            return hidden
+            return logit
 
 
 if __name__ == '__main__':

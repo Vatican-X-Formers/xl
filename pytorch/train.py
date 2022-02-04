@@ -56,6 +56,7 @@ from utils.exp_utils import l2_promote
 from utils.exp_utils import log_env_info
 from utils.exp_utils import register_ignoring_timeout_handler
 
+np.set_printoptions(suppress=True)
 run = None
 
 def parse_args():
