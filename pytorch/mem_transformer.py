@@ -396,7 +396,8 @@ class MemTransformerLM(nn.Module):
                  funnel_resample='naive',
                  activation_function='relu',
                  gather_stats=['shortened_length'],
-                 old_checkpoint=False):
+                 old_checkpoint=False,
+                 boundary_ids=[0]):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -466,6 +467,7 @@ class MemTransformerLM(nn.Module):
             assert post_layers == pre_layers, 'Our model is symmetric'
             assert shorten_factor > 1 or funnel_resample == 'custom'
             self.funnel_mode = funnel_resample
+            self.boundary_ids = boundary_ids
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
                 Downsampler(
@@ -611,7 +613,7 @@ class MemTransformerLM(nn.Module):
 
         return core_out, new_mems
 
-    def create_masks(self, data, boundary_id = 0):
+    def create_masks(self, data, boundary_ids = [0]):
         # Assumptions:
         # Nothing is done in data loader, input to the mask creation is raw data, the sequence of token ids
         # Besides the raw data I know the token id of a space
@@ -620,7 +622,9 @@ class MemTransformerLM(nn.Module):
         # The function here assumes the data to be of shape [batch, seq_len], however it is of shape [seq_len, batch]. As a result we start and finish with transose
         data = data.transpose(0, 1)
 
-        boundaries = data == 0
+        boundaries = torch.zeros_like(data, dtype=torch.bool)
+        for boundary_id in boundary_ids:
+            boundaries |= (data == boundary_id)
         boundaries[:, 0] = True
         n_segments = boundaries.sum(-1)
 
@@ -659,7 +663,7 @@ class MemTransformerLM(nn.Module):
 
         # Create masks if custom downsampling/upsampling
         if getattr(self, 'funnel_mode', None) == 'custom':
-            downsampling_mask, upsampling_mask = self.create_masks(data)
+            downsampling_mask, upsampling_mask = self.create_masks(data, boundary_ids=self.boundary_ids)
             if 'shortened_length' in self.gather_stats:
                 stats['shortened_length'] = downsampling_mask.size(2)
         else:

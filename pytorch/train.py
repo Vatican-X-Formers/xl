@@ -851,6 +851,11 @@ def main():
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
+    
+    if args.dataset == 'enwik8':
+        boundary_ids = [vocab.sym2idx[str(ord(' '))], vocab.sym2idx[str(ord('\n'))]]
+    elif args.dataset == 'text8':
+        boundary_ids = [vocab.sym2idx['_']]
 
     if args.mem_len == 0:
         eval_mem_len = 0
@@ -905,7 +910,8 @@ def main():
         'sample_softmax': args.sample_softmax,
         'funnel_config': args.funnel_config,
         'funnel_resample': args.funnel_resample,
-        'activation_function': args.activation_function
+        'activation_function': args.activation_function,
+        'boundary_ids': boundary_ids
         }
     if rank == 0:
         global run
