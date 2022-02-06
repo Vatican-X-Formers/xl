@@ -913,6 +913,7 @@ def main():
         run['model_config'] = model_config
         run['args'] = vars(args)
         run['branch'] = os.getenv('TRAX_BRANCH')
+        run['exp_path'] = os.getenv('EXPERIMENT_PATH')
 
     model = MemTransformerLM(**model_config)
 
