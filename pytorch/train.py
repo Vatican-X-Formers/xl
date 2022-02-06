@@ -853,7 +853,7 @@ def main():
     args.n_token = ntokens
     
     if args.dataset == 'enwik8':
-        boundary_ids = [vocab.sym2idx[str(ord(' '))], vocab.sym2idx[str(ord('\n'))]]
+        boundary_ids = [vocab.sym2idx[str(ord(' '))], vocab.sym2idx['<eos>']]
     elif args.dataset == 'text8':
         boundary_ids = [vocab.sym2idx['_']]
 
