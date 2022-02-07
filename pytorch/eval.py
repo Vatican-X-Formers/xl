@@ -68,8 +68,10 @@ def load_checkpoint(path):
     return checkpoint
 
 
-def sample_generation(vocab, model, args, temp = 0.5, start_seq = [0], steps=100):
+def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100, dataset='text8'):
     # Turn on evaluation mode which disables dropout.
+    model.eval()
+
     if args.mem_len == 0:
         model.reset_length(tgt_len=args.eval_tgt_len,
                            ext_len=args.ext_len + args.tgt_len - args.eval_tgt_len,
@@ -100,9 +102,16 @@ def sample_generation(vocab, model, args, temp = 0.5, start_seq = [0], steps=100
                        ext_len=args.ext_len,
                        mem_len=args.mem_len
                        )
+    model.train()
 
-    return vocab.convert_to_sent(generated_sequence).replace(' ', '')
+    generated_sample = vocab.convert_to_sent(generated_sequence[start_len:])
 
+    if dataset == 'text8':
+        generated_sample = generated_sample.replace(' ', '').replace('_', ' ')
+    elif dataset == 'enwik8':
+        raise NotImplemented
+
+    return generated_sample
 
 def main():
     args = parse_args()
@@ -181,6 +190,22 @@ def main():
     test_sample = 'mary was not permitted to see them or to speak in her own defence at the tribunal she refused to offer a written defence unless elizabeth would guarantee a verdict of not guilty which elizabeth would not do although the casket letters were accepted by the inquiry as genuine after a study of the handwriting and of the information contained therein and were generally held to be certain proof of guilt if authentic the inquiry reached the conclusion that nothing was proven from the start this could have been '
     test_sample = test_sample.replace(' ', '_') 
     
+    def test_text8():
+        print(f'The test sample is {test_sample}')
+        print('The completion is:')
+
+        with torch.no_grad():
+            print(sample_generation(vocab, model, args, start_seq=vocab.get_indices(test_sample)))
+            
+        print()
+        print('Now we generate from the beginning')
+        for i in range(3):
+            with torch.no_grad():
+                print(sample_generation(vocab, model, args, start_seq=vocab.get_indices(test_sample), steps=500))
+
+    test_text8()
+    return
+
     def test1():
         # https://arxiv.org/pdf/1808.04444v2.pdf
         possibilities = "prz, proven, proved, proof, prevented, presented, problematic, probably, provided, practical, provoked, preceded, predicted, previously, presumed, praised, proposed, practicable, produced, present, preserved, precisely, prior, protected, probable, prompted, proofed, properly, practiced, prohibited, profound, preferable, proceeded, precise, predictable, practically"
@@ -204,10 +229,7 @@ def main():
     def sample_get_to_text(x):
         y = [int(lel) if lel != '<eos>' else ord('\n') for lel in x.split(' ')]
         return bytes(y).decode()
-
-    with torch.no_grad():
-        print(sample_generation(vocab, model, args, start_seq=vocab.get_indices(test_sample), temp=1.0))
-
+    
     if not args.debug and not args.no_eval:
         # Run on test data.
         summary = {}

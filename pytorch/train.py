@@ -434,45 +434,6 @@ def update_dropatt(m, args):
         m.dropatt.p = args.dropatt
 
 
-def sample_generation(vocab, model, args):
-    # Turn on evaluation mode which disables dropout.
-    model.eval()
-
-    # If the model does not use memory at all, make the ext_len longer.
-    # Otherwise, make the mem_len longer and keep the ext_len the same.
-    if args.mem_len == 0:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len + args.tgt_len - args.eval_tgt_len,
-                           mem_len=args.mem_len
-                           )
-    else:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len,
-                           mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
-                           )
-
-    generated_sequence = [0]
-
-    with torch.no_grad():
-        for i in range(200):
-            mems, target = None, None
-            data = torch.tensor(generated_sequence).unsqueeze(0).cuda()
-
-            enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.cuda.amp.autocast(enable_autocast):
-                logits = model(data, target, mems)
-                next_index = torch.nn.functional.softmax(logits[-1, -1, :] / 0.5, dim = 0).cpu().multinomial(num_samples=1, replacement=True).item()
-                # next_index = logits[-1, -1, :].argmax().cpu().item()
-                generated_sequence.append(next_index)
-
-    model.reset_length(tgt_len=args.tgt_len,
-                       ext_len=args.ext_len,
-                       mem_len=args.mem_len
-                       )
-    model.train()
-    return vocab.convert_to_sent(generated_sequence)
-
-
 def evaluate(eval_iter, model, args):
     # Turn on evaluation mode which disables dropout.
     model.eval()
