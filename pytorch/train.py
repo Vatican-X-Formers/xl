@@ -185,6 +185,7 @@ def parse_args():
         help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
+    model.add_argument('--boundary_ids', type=str, default='["_"]', help='')
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -851,11 +852,18 @@ def main():
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
-    
-    if args.dataset == 'enwik8':
-        boundary_ids = [vocab.sym2idx[str(ord(' '))], vocab.sym2idx['<eos>']]
-    elif args.dataset == 'text8':
-        boundary_ids = [vocab.sym2idx['_']]
+   
+    boundary_ids = [vocab.sym2idx[c] for c in eval(args.boundary_ids)]
+
+    print(vocab.sym2idx)
+    print(args.boundary_ids)
+    print(boundary_ids)
+
+    #if args.boundary_ids
+    #elif args.dataset == 'enwik8':
+    #    boundary_ids = [vocab.sym2idx[str(ord(' '))], vocab.sym2idx['<eos>']]
+    #elif args.dataset == 'text8':
+    #    boundary_ids = [vocab.sym2idx['_']]
 
     if args.mem_len == 0:
         eval_mem_len = 0
