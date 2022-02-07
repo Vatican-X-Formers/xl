@@ -395,9 +395,9 @@ class MemTransformerLM(nn.Module):
                  funnel_config="[3, (1, 2) ,3]", 
                  funnel_resample='naive',
                  activation_function='relu',
-                 gather_stats=['shortened_length'],
+                 gather_stats=[],
                  old_checkpoint=False,
-                 boundary_ids=[0]):
+                 boundary_ids=[]):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -466,6 +466,7 @@ class MemTransformerLM(nn.Module):
             assert funnel_layers > 0
             assert post_layers == pre_layers, 'Our model is symmetric'
             assert shorten_factor > 1 or funnel_resample == 'custom'
+            assert funnel_resample != 'custom' or len(boundary_ids) > 0
             self.funnel_mode = funnel_resample
             self.boundary_ids = boundary_ids
             self.layers = nn.ModuleList([
@@ -613,7 +614,7 @@ class MemTransformerLM(nn.Module):
 
         return core_out, new_mems
 
-    def create_masks(self, data, boundary_ids = [0]):
+    def create_masks(self, data, boundary_ids):
         # Assumptions:
         # Nothing is done in data loader, input to the mask creation is raw data, the sequence of token ids
         # Besides the raw data I know the token id of a space
@@ -633,7 +634,7 @@ class MemTransformerLM(nn.Module):
         
         # Upsample mask creation
         upsample_mask = mask.cumsum(-1) - 1
-        
+
         # Downsample mask creation
         maximum_segment = n_segments.max()
         tmp = torch.zeros_like(data).unsqueeze(2) + torch.arange(1, maximum_segment + 1, 1, device = data.device)

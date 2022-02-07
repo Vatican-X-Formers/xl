@@ -36,10 +36,6 @@ try:
     from apex import amp
 except ModuleNotFoundError:
     warnings.warn('APEX AMP is unavailable')
-# try:
-#     import pyprof
-# except ModuleNotFoundError:
-#     warnings.warn('PyProf is unavailable')
 
 from torch.nn.parallel import DistributedDataParallel
 
@@ -47,7 +43,6 @@ import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
-# from utils.data_parallel import BalancedDataParallel
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import benchmark
@@ -57,7 +52,6 @@ from utils.exp_utils import log_env_info
 from utils.exp_utils import register_ignoring_timeout_handler
 
 np.set_printoptions(suppress=True)
-run = None
 
 def parse_args():
     parent_parser = argparse.ArgumentParser(
@@ -185,7 +179,8 @@ def parse_args():
         help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
-    model.add_argument('--boundary_ids', type=str, default='["_"]', help='')
+    model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
+    model.add_argument('--boundary_ids', type=str, default='[]', help='')
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -256,6 +251,8 @@ def parse_args():
                      help='Max eval steps')
     val.add_argument('--eval_interval', type=int, default=5000,
                      help='Evaluation interval')
+    val.add_argument('--ckpt_path', type=str, default="")
+    val.add_argument('--autoreg', action='store_true')
 
     dist = parser.add_argument_group('distributed setup')
     dist.add_argument('--local_rank',  type=int,
@@ -266,6 +263,9 @@ def parse_args():
     args, _ = parser.parse_known_args()
 
     args.tied = not args.not_tied
+    
+    if args.ckpt_path == "":
+        args.ckpt_path = config_args.config_file
 
     if args.d_embed < 0:
         args.d_embed = args.d_model
@@ -516,6 +516,42 @@ def evaluate(eval_iter, model, args):
     return total_loss / total_len
 
 
+def gen_model_config(args, vocab, old_checkpoint=False): 
+    ntokens = len(vocab)
+    boundary_ids = [vocab.sym2idx[c] for c in eval(args.boundary_ids)]
+    model_config = {
+        'n_token': ntokens,
+        'n_layer': args.n_layer,
+        'n_head': args.n_head,
+        'd_model': args.d_model,
+        'd_head': args.d_head,
+        'd_inner': args.d_inner,
+        'dropout': args.dropout,
+        'dropatt': args.dropatt,
+        'dtype': None,
+        'tie_weight': args.tied,
+        'd_embed': args.d_embed,
+        'div_val': args.div_val,
+        'tie_projs': [False],
+        'pre_lnorm': args.pre_lnorm,
+        'tgt_len': args.tgt_len,
+        'ext_len': args.ext_len,
+        'mem_len': args.mem_len,
+        'cutoffs': [],
+        'same_length': args.same_length,
+        'attn_type': args.attn_type,
+        'clamp_len': args.clamp_len,
+        'sample_softmax': args.sample_softmax,
+        'funnel_config': args.funnel_config,
+        'funnel_resample': args.funnel_resample,
+        'activation_function': args.activation_function,
+        'gather_stats': args.gather_stats,
+        'old_checkpoint': old_checkpoint,
+        'boundary_ids': boundary_ids,
+        }
+    return model_config
+
+
 def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
                     optimizer, device, delay_unscale, args):
     cpu = torch.device('cpu')
@@ -590,19 +626,6 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         for k,v in stats.items():
             stats_agg[k].append(v)
 
-        #total_grad_l2 = 0
-        #total_weight_l2 = 0
-
-        #for name, p in model.named_parameters():
-         #   weights_l2 = p.detach().norm(2)
-          #  total_weight_l2 += weights_l2.item() ** 2
-         #   if p.grad == None:
-          #      import pdb
-           #     pdb.set_trace()
-            #grad_l2 = p.grad.detach().data.norm(2)
-            #total_grad_l2 += grad_l2.item() ** 2
-        #import pdb
-        #pdb.set_trace()
         stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
         stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
 
@@ -852,18 +875,6 @@ def main():
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
-   
-    boundary_ids = [vocab.sym2idx[c] for c in eval(args.boundary_ids)]
-
-    print(vocab.sym2idx)
-    print(args.boundary_ids)
-    print(boundary_ids)
-
-    #if args.boundary_ids
-    #elif args.dataset == 'enwik8':
-    #    boundary_ids = [vocab.sym2idx[str(ord(' '))], vocab.sym2idx['<eos>']]
-    #elif args.dataset == 'text8':
-    #    boundary_ids = [vocab.sym2idx['_']]
 
     if args.mem_len == 0:
         eval_mem_len = 0
@@ -879,48 +890,11 @@ def main():
                                   args.eval_tgt_len, device=device,
                                   mem_len=eval_mem_len, ext_len=args.ext_len)
 
-    # adaptive softmax / embedding
-    cutoffs, tie_projs = [], [False]
-    if args.adaptive:
-        assert args.dataset in ['wt103', 'lm1b']
-        if args.dataset == 'wt103':
-            cutoffs = [19997, 39997, 199997]
-            tie_projs += [True] * len(cutoffs)
-        elif args.dataset == 'lm1b':
-            cutoffs = [59997, 99997, 639997]
-            tie_projs += [False] * len(cutoffs)
-
     ###########################################################################
     # Build the model
     ###########################################################################
-    model_config = {
-        'n_token': ntokens,
-        'n_layer': args.n_layer,
-        'n_head': args.n_head,
-        'd_model': args.d_model,
-        'd_head': args.d_head,
-        'd_inner': args.d_inner,
-        'dropout': args.dropout,
-        'dropatt': args.dropatt,
-        'dtype': None,
-        'tie_weight': args.tied,
-        'd_embed': args.d_embed,
-        'div_val': args.div_val,
-        'tie_projs': tie_projs,
-        'pre_lnorm': args.pre_lnorm,
-        'tgt_len': args.tgt_len,
-        'ext_len': args.ext_len,
-        'mem_len': args.mem_len,
-        'cutoffs': cutoffs,
-        'same_length': args.same_length,
-        'attn_type': args.attn_type,
-        'clamp_len': args.clamp_len,
-        'sample_softmax': args.sample_softmax,
-        'funnel_config': args.funnel_config,
-        'funnel_resample': args.funnel_resample,
-        'activation_function': args.activation_function,
-        'boundary_ids': boundary_ids
-        }
+    model_config = gen_model_config(args, vocab) 
+
     if rank == 0:
         global run
         run = neptune.init('syzymon/hourglass-pytorch')
@@ -931,7 +905,7 @@ def main():
 
     model = MemTransformerLM(**model_config)
 
-    if args.local_rank == 0:
+    if rank == 0:
         print(model)
 
     model.apply(functools.partial(weights_init, args=args))
