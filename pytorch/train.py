@@ -50,7 +50,10 @@ from utils.exp_utils import create_exp_dir
 from utils.exp_utils import l2_promote
 from utils.exp_utils import log_env_info
 from utils.exp_utils import register_ignoring_timeout_handler
+import torch.nn.functional as F
+import pdb
 
+run = None
 np.set_printoptions(suppress=True)
 
 def parse_args():
@@ -251,8 +254,10 @@ def parse_args():
                      help='Max eval steps')
     val.add_argument('--eval_interval', type=int, default=5000,
                      help='Evaluation interval')
+    val.add_argument('--text_generation_interval', type=int, default=5000)
     val.add_argument('--ckpt_path', type=str, default="")
     val.add_argument('--autoreg', action='store_true')
+    val.add_argument('--eval_gt_boundaries', action='store_true')
 
     dist = parser.add_argument_group('distributed setup')
     dist.add_argument('--local_rank',  type=int,
@@ -434,6 +439,52 @@ def update_dropatt(m, args):
         m.dropatt.p = args.dropatt
 
 
+def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100, dataset='text8'):
+    # Turn on evaluation mode which disables dropout.
+    model.eval()
+
+    if args.mem_len == 0:
+        model.reset_length(tgt_len=args.eval_tgt_len,
+                           ext_len=args.ext_len + args.tgt_len - args.eval_tgt_len,
+                           mem_len=args.mem_len
+                           )
+    else:
+        model.reset_length(tgt_len=args.eval_tgt_len,
+                           ext_len=args.ext_len,
+                           mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
+                           )
+
+    start_len = len(start_seq)
+    generated_sequence = start_seq
+
+    with torch.no_grad():
+        for i in range(steps):
+            mems, target = None, None
+            data = torch.tensor(generated_sequence).unsqueeze(1).cuda()
+
+            enable_autocast = args.fp16 and args.amp == 'pytorch'
+            with torch.cuda.amp.autocast(enable_autocast):
+                logits = model(data, target, mems)
+                probs = F.softmax(logits[-1, 0, :], dim = 0)
+                next_index = probs.cpu().multinomial(num_samples=1, replacement=True).item()
+                generated_sequence.append(next_index)
+
+    model.reset_length(tgt_len=args.tgt_len,
+                       ext_len=args.ext_len,
+                       mem_len=args.mem_len
+                       )
+    model.train()
+
+    generated_sample = vocab.convert_to_sent(generated_sequence[start_len:])
+
+    if dataset == 'text8':
+        generated_sample = generated_sample.replace(' ', '').replace('_', ' ')
+    elif dataset == 'enwik8':
+        raise NotImplemented
+
+    return generated_sample
+
+
 def evaluate(eval_iter, model, args):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -584,11 +635,18 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
             train_loss += train_loss_chunk
 
+        # Custom stats added by me
         for k,v in stats.items():
             stats_agg[k].append(v)
 
         stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
         stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+        
+        if run and train_step % args.text_generation_interval == 0:
+            generated_sample = sample_generation(vocab, model, args)
+            run['gen/text'].log(generated_sample)
+        
+        # Finish of custom statistics
 
         if args.fp16:
             if args.amp == 'pytorch':
@@ -685,11 +743,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         do_periodic_eval = train_step % args.eval_interval == 0
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
-
-        if run and train_step % 1500 == 0:
-            xd = sample_generation(vocab, model, args)
-            run['gen/text'].log(xd)
-
+        
         if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
             eval_start_time = time.time()
             val_loss = evaluate(va_iter, model, args)
@@ -703,7 +757,25 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                           (time.time() - eval_start_time),
                           val_loss,
                           )
+
+            if args.eval_gt_boundaries:
+                keep_fm = model.funnel_mode
+                keep_b_ids = model.boundary_ids
+
+                model.funnel_mode = 'custom'
+                assert args.dataset == 'text8'
+                model.boundary_ids = [vocab.sym2idx['_']]
+
+                val_loss_gt = evaluate(va_iter, model, args)
+                val_loss_gt = utils.distributed.all_reduce_item(val_loss_gt, op='mean')
+
+                model.funnel_mode = keep_fm
+                model.boundary_ids = keep_b_ids
+
             if run:
+                if args.eval_gt_boundaries:
+                    run['val/gt'].log(val_loss_gt, step=train_step)
+
                 run['val/loss'].log(val_loss, step=train_step)
 
             dllogger_data = {
@@ -735,13 +807,6 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                                 train_step, best_val_loss, is_best,
                                 args.work_dir)
 
-            # dev-performance based learning rate annealing
-            # if args.scheduler == 'dev_perf':
-            #     scheduler.step(val_loss)
-            #     if scheduler_sparse:
-            #         scheduler_sparse.step(val_loss)
-
-            # subtract eval time from timers for training
             log_start_time += time.time() - eval_start_time
 
         if interrupted:
@@ -750,6 +815,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
         if is_final_step:
             break
+
     return train_step, best_val_loss
 
 

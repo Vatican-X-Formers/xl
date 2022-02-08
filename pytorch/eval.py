@@ -42,7 +42,7 @@ import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
-from train import parse_args, gen_model_config 
+from train import parse_args, gen_model_config, sample_generation 
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import benchmark
@@ -67,51 +67,6 @@ def load_checkpoint(path):
     checkpoint = torch.load(path, map_location=dst)
     return checkpoint
 
-
-def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100, dataset='text8'):
-    # Turn on evaluation mode which disables dropout.
-    model.eval()
-
-    if args.mem_len == 0:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len + args.tgt_len - args.eval_tgt_len,
-                           mem_len=args.mem_len
-                           )
-    else:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len,
-                           mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
-                           )
-
-    start_len = len(start_seq)
-    generated_sequence = start_seq
-
-    with torch.no_grad():
-        for i in range(steps):
-            mems, target = None, None
-            data = torch.tensor(generated_sequence).unsqueeze(1).cuda()
-
-            enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.cuda.amp.autocast(enable_autocast):
-                logits = model(data, target, mems)
-                probs = F.softmax(logits[-1, 0, :], dim = 0)
-                next_index = probs.cpu().multinomial(num_samples=1, replacement=True).item()
-                generated_sequence.append(next_index)
-
-    model.reset_length(tgt_len=args.tgt_len,
-                       ext_len=args.ext_len,
-                       mem_len=args.mem_len
-                       )
-    model.train()
-
-    generated_sample = vocab.convert_to_sent(generated_sequence[start_len:])
-
-    if dataset == 'text8':
-        generated_sample = generated_sample.replace(' ', '').replace('_', ' ')
-    elif dataset == 'enwik8':
-        raise NotImplemented
-
-    return generated_sample
 
 def main():
     args = parse_args()
