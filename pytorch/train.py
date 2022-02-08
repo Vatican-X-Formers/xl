@@ -184,6 +184,7 @@ def parse_args():
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
     model.add_argument('--boundary_ids', type=str, default='[]', help='')
+    model.add_argument('--corruption_probs', nargs="+", default=[0.0, 0.0, 0.0])
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -560,6 +561,7 @@ def gen_model_config(args, vocab, old_checkpoint=False):
         'gather_stats': args.gather_stats,
         'old_checkpoint': old_checkpoint,
         'boundary_ids': boundary_ids,
+        'corruption_probs': args.corruption_probs,
         }
     return model_config
 
@@ -765,12 +767,14 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 model.funnel_mode = 'custom'
                 assert args.dataset == 'text8'
                 model.boundary_ids = [vocab.sym2idx['_']]
+                model.corruption_probs = [0.0, 0.0, 0.0]
 
                 val_loss_gt = evaluate(va_iter, model, args)
                 val_loss_gt = utils.distributed.all_reduce_item(val_loss_gt, op='mean')
 
                 model.funnel_mode = keep_fm
                 model.boundary_ids = keep_b_ids
+                model.corruption_probs = args.corruption_probs,
 
             if run:
                 if args.eval_gt_boundaries:
