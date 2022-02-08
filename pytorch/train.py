@@ -774,7 +774,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
                 model.funnel_mode = keep_fm
                 model.boundary_ids = keep_b_ids
-                model.corruption_probs = args.corruption_probs,
+                model.corruption_probs = args.corruption_probs
 
             if run:
                 if args.eval_gt_boundaries:
