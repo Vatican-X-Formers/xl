@@ -202,14 +202,10 @@ def parse_args():
                      help='Max number of training steps for LR scheduler')
     opt.add_argument('--warmup_step', type=int, default=1000,
                      help='Number of iterations for LR warmup')
-    opt.add_argument('--lr_min', type=float, default=0.0,
-                     help='Minimum learning rate during annealing')
     opt.add_argument('--clip', type=float, default=0.25,
                      help='Gradient clipping')
     opt.add_argument('--weight_decay', type=float, default=0.0,
                      help='Weight decay for adam|lamb')
-    opt.add_argument('--clip_nonemb', action='store_true',
-                     help='Only clip the gradient of non-embedding params')
     opt.add_argument('--patience', type=int, default=0,
                      help='Patience')
     opt.add_argument('--eta_min', type=float, default=0.000,
@@ -220,10 +216,6 @@ def parse_args():
                           help='Max number of training steps')
     training.add_argument('--batch_size', type=int, default=256,
                           help='Global batch size')
-    training.add_argument('--local_batch_size', type=int, default=None,
-                          help='Local (per-device) batch size, this setting \
-                          overrides global --batch_size and sets batch_size \
-                          to local_batch_size * world_size')
     training.add_argument('--batch_chunk', type=int, default=1,
                           help='Split batch into chunks and train with '
                           'gradient accumulation')
@@ -240,8 +232,6 @@ def parse_args():
     training.add_argument('--multi_gpu', default=None, type=str,
                           choices=['ddp', 'dp'],
                           help='Use multiple GPU')
-    training.add_argument('--gpu0_bsz', type=int, default=-1,
-                          help='Batch size on gpu 0 (for "dp" backend)')
     training.add_argument('--same_length', action='store_true', # XXX
                           help='Use the same attn length for all tokens')
     training.add_argument('--swap_mem', action='store_true',
