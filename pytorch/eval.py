@@ -42,7 +42,7 @@ import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
-from train import parse_args, gen_model_config, sample_generation 
+from train import parse_args, gen_model_config, sample_generation, evaluate 
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import benchmark
@@ -99,6 +99,7 @@ def main():
     else:
         eval_mem_len = args.mem_len + args.tgt_len - args.eval_tgt_len
 
+    print(args)
     te_iter = corpus.get_iterator('test', args.eval_batch_size, args.eval_tgt_len, device=device,mem_len=eval_mem_len, ext_len=args.ext_len)
 
     data = [batch for batch in te_iter]
@@ -158,9 +159,6 @@ def main():
             with torch.no_grad():
                 print(sample_generation(vocab, model, args, start_seq=vocab.get_indices(test_sample), steps=500))
 
-    test_text8()
-    return
-
     def test1():
         # https://arxiv.org/pdf/1808.04444v2.pdf
         possibilities = "prz, proven, proved, proof, prevented, presented, problematic, probably, provided, practical, provoked, preceded, predicted, previously, presumed, praised, proposed, practicable, produced, present, preserved, precisely, prior, protected, probable, prompted, proofed, properly, practiced, prohibited, profound, preferable, proceeded, precise, predictable, practically"
@@ -187,35 +185,19 @@ def main():
     
     if not args.debug and not args.no_eval:
         # Run on test data.
-        summary = {}
         test_start_time = time.time()
         with torch.autograd.profiler.emit_nvtx(enabled=args.profile):
             test_loss = evaluate(te_iter, model, args)
             test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
         test_elapsed = time.time() - test_start_time
 
-        logging.info('=' * 100)
         if args.dataset in ['enwik8', 'text8']:
-            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test bpc {:9.5f}'.format(
+            print('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test bpc {:9.5f}'.format(
                 test_elapsed, test_loss, test_loss / math.log(2)))
         else:
             logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test ppl {:9.3f}'.format(
                 test_elapsed, test_loss, math.exp(test_loss)))
-        if run:
-            run['test_loss'].log(test_loss, step=train_step)
-            run['test_ppl'].log(math.exp(test_loss), step=train_step)
 
-        logging.info('=' * 100)
-
-        summary.update({
-            'test_elapsed': test_elapsed,
-            'test_loss': test_loss,
-            })
-
-        if args.dataset in ['enwik8', 'text8']:
-            summary['test_bits_per_character'] = test_loss / math.log(2)
-        else:
-            summary['test_perplexity'] = math.exp(test_loss)
 
 if __name__ == "__main__":
     main()

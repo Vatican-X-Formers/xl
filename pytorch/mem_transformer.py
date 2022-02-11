@@ -433,7 +433,7 @@ class MemTransformerLM(nn.Module):
         self.ext_len = ext_len
         
         # It is very important shit, we don't support that
-        assert self.ext_len == 0
+        # assert self.ext_len == 0
 
         self.pre_lnorm = pre_lnorm
         if self.pre_lnorm:
@@ -522,7 +522,7 @@ class MemTransformerLM(nn.Module):
             raise RuntimeError(f'ext_len should be >= 0, but got {ext_len}')
         if mem_len < 0:
             raise RuntimeError(f'mem_len should be >= 0, but got {mem_len}')
-        assert ext_len == 0
+        # assert ext_len == 0
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
@@ -726,7 +726,7 @@ class MemTransformerLM(nn.Module):
         # the last batch could be leftover and could be shorter
         # therefore we use actual length of a batch and not args.tgt_len
         # tgt_len = target.size(0)
-        tgt_len = data.size(0)
+        tgt_len = target.size(0) if target is not None else data.size(0)
 
         # Create masks if custom downsampling/upsampling
         if getattr(self, 'funnel_mode', None) == 'custom':
@@ -784,6 +784,7 @@ class MemTransformerLM(nn.Module):
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
 
+        hidden = hidden[-target.size(0):]
         if getattr(self, 'final_cast', None) is not None: 
             logit = self.final_cast(hidden)
         else:
