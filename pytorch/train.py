@@ -286,13 +286,6 @@ def parse_args():
     if args.batch_size % args.batch_chunk != 0:
         raise RuntimeError('Batch size needs to be divisible by batch chunk')
 
-    if (
-        args.local_batch_size is not None
-        and args.local_batch_size % args.batch_chunk != 0
-    ):
-        raise RuntimeError('Local batch size needs to be divisible by '
-                           'batch chunk')
-
     if args.fp16 and args.amp == 'apex' and 'apex' not in sys.modules:
         raise RuntimeError(
             'APEX AMP unavailable, install APEX or switch to pytorch AMP'
@@ -864,15 +857,6 @@ def main():
                                   filename=log_file,
                                   )
     utils.exp_utils.setup_dllogger(enabled=True, filename=dllog_file)
-
-    if args.local_batch_size is not None:
-        world_size = utils.distributed.get_world_size()
-        args.batch_size = world_size * args.local_batch_size
-        logging.info(f'--local_batch_size was set, adjusting global batch size'
-                     f' to {args.batch_size} (local_batch_size * world_size)')
-        if args.batch_size % args.batch_chunk != 0:
-            raise RuntimeError('Batch size needs to be divisible by '
-                               'batch chunk')
 
     if args.profile:
         try:
