@@ -912,6 +912,7 @@ def main():
         run['args'] = vars(args)
         run['branch'] = os.getenv('TRAX_BRANCH')
         run['exp_path'] = os.getenv('EXPERIMENT_PATH')
+        run['slurm_jobid'] = os.getenv('SLURM_JOB_ID')
 
     model = MemTransformerLM(**model_config)
 
