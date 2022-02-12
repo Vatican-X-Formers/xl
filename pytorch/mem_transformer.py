@@ -636,7 +636,7 @@ class MemTransformerLM(nn.Module):
                 mask |= (data == boundary_id)
         elif mask_type == "normal":
             min_seg_length, max_seg_length = 2, 15
-            mean_normal, std_normal = 5.4, 1
+            mean_normal, std_normal = 5.5, 1
             x = torch.normal(mean=mean_normal, std=std_normal, size=data.size()).round().clamp(min_seg_length, max_seg_length).long().to(data.device)
             x = x.cumsum(dim=-1)
             y = (x < data.size(1))
