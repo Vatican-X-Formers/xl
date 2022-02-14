@@ -619,18 +619,18 @@ class MemTransformerLM(nn.Module):
         return core_out, new_mems
     
     def create_masks(self, data, boundary_ids, corruption_probs, mask_type):
-# Assumptions:
-# Nothing is done in data loader, input to the mask creation is raw data, the sequence of token ids
-# Besides the raw data I know the token id of a space
-# The first group would consists of a trainable vector that would be a part of downsampler class, therefore we have number_of_boundaries + 1 downsampled groups 
-# The function here assumes the data to be of shape [batch, seq_len], however it is of shape [seq_len, batch]. As a result we start and finish with transose
+        # Assumptions:
+        # Nothing is done in data loader, input to the mask creation is raw data, the sequence of token ids
+        # Besides the raw data I know the token id of a space
+        # The first group would consists of a trainable vector that would be a part of downsampler class, therefore we have number_of_boundaries + 1 downsampled groups 
+        # The function here assumes the data to be of shape [batch, seq_len], however it is of shape [seq_len, batch]. As a result we start and finish with transose
 
         data = data.transpose(0, 1)
 
-# Initial mask creation
+        # Initial mask creation
         mask = torch.zeros_like(data, dtype=torch.bool)
 
-# Mask creation by boundary ids
+        # Mask creation by boundary ids
         if mask_type == "boundary_ids":
             for boundary_id in boundary_ids:
                 mask |= (data == boundary_id)
@@ -657,8 +657,8 @@ class MemTransformerLM(nn.Module):
         else:
             raise NotImplemented
 
-# Boundary corruption
-# corruption_probs is a tuple of 3 probs
+        # Boundary corruption
+        # corruption_probs is a tuple of 3 probs
         move_prob, deletion_prob, insert_prob = corruption_probs
         final_mask = torch.zeros_like(data, dtype=torch.bool)
 
@@ -678,39 +678,40 @@ class MemTransformerLM(nn.Module):
         batch_nonzero_ids, elems_nonzero_ids = final_mask.nonzero(as_tuple=True)
         batch_zero_ids, elems_zero_ids = (final_mask == 0).nonzero(as_tuple=True)
 
-# Delete
+        # Delete
         non_zeros = batch_nonzero_ids.size(0)
         to_erase = int(non_zeros*deletion_prob)
         delete_mask = torch.randperm(non_zeros)[:to_erase].to(final_mask.device)
         final_mask[(batch_nonzero_ids[delete_mask], elems_nonzero_ids[delete_mask])] = 0
 
-# Insert
+        # Insert
         zeros = batch_zero_ids.size(0)
-# Here I use non_zeros on purpose, I want insert and deletion prob to work similarly
+        # Here I use non_zeros on purpose, I want insert and deletion prob to work similarly
         to_insert = int(non_zeros*insert_prob)
         insert_mask = torch.randperm(zeros)[:to_insert].to(final_mask.device)
         final_mask[(batch_zero_ids[insert_mask], elems_zero_ids[insert_mask])] = 1
-# Finish of boundary corruption polices
+        # Finish of boundary corruption polices
 
         mask = final_mask
         mask[:, 0] = True
 
-# Upsample mask creation
+        # Upsample mask creation
         upsample_mask = mask.cumsum(-1) - 1
 
-# Downsample mask creation
+        # Downsample mask creation
         n_segments = mask.sum(-1)
         maximum_segment = n_segments.max()
         tmp = torch.zeros_like(data).unsqueeze(2) + torch.arange(1, maximum_segment + 1, 1, device = data.device)
         foo = tmp - mask.cumsum(1).unsqueeze(-1)
         final = torch.zeros_like(foo)
         final[foo == 0] = 1
-        final = final / (final.sum(1, keepdim=True) + 1e-9)
+        size_of_groups = final.sum(1, keepdim=True)
+        final = final / (size_of_groups + 1e-9)
         downsample_mask = final
 
         data = data.transpose(0, 1)
 
-        return downsample_mask, upsample_mask   
+        return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()   
 
 
     def forward(self, data, target, mems):
@@ -730,7 +731,7 @@ class MemTransformerLM(nn.Module):
 
         # Create masks if custom downsampling/upsampling
         if getattr(self, 'funnel_mode', None) == 'custom':
-            downsampling_mask, upsampling_mask = self.create_masks(
+            downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(
                         data, 
                         boundary_ids=self.boundary_ids, 
                         corruption_probs=self.corruption_probs,
@@ -740,6 +741,7 @@ class MemTransformerLM(nn.Module):
                 stats['shortened_length'] = downsampling_mask.size(2)
         else:
             downsampling_mask, upsampling_mask = None, None
+
 
         # Token_ids to vector embeddings
         word_emb = self.word_emb(data) # T x B x C
@@ -801,6 +803,18 @@ class MemTransformerLM(nn.Module):
             else:
                 loss = self.crit(logit, target)
                 loss = loss.view(tgt_len, -1)
+
+            if not self.training and loss.size(0) == downsampling_mask.size(1):
+                assert loss.size(0) == downsampling_mask.size(1), 'we dont use it for eval with context, it gets too messy'
+                number_of_groups = torch.bincount(size_of_groups, minlength=150)
+
+                with torch.no_grad():
+                    loss_per_group_len = torch.einsum('lb, blt -> bt', loss.detach().clone(), downsampling_mask).detach().clone()
+
+                    sum_of_losses_per_group_size = torch.zeros_like(number_of_groups).float()
+                    sum_of_losses_per_group_size.index_add_(0, size_of_groups, loss_per_group_len.flatten())
+                    stats['sum_of_losses_per_group_size'] = sum_of_losses_per_group_size
+                    stats['number_of_groups'] = number_of_groups
 
             return loss, new_mems, stats
         else:

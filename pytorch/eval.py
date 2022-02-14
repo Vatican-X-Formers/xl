@@ -100,11 +100,13 @@ def main():
         eval_mem_len = args.mem_len + args.tgt_len - args.eval_tgt_len
 
     print(args)
+    # There should be 5*1e6 tokens in test set in both enwik and text8
     te_iter = corpus.get_iterator('test', args.eval_batch_size, args.eval_tgt_len, device=device,mem_len=eval_mem_len, ext_len=args.ext_len)
-
-    data = [batch for batch in te_iter]
-    batch = data[0]
-    input_data, target, _, _ = batch
+    world_size = utils.distributed.get_world_size()
+    print(f'We expect {te_iter.data.size(0)/args.eval_tgt_len} batches')
+    # data = [batch for batch in te_iter]
+    # batch = data[0]
+    # input_data, target, _, _ = batch
     
     ###########################################################################
     # Build the model

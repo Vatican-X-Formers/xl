@@ -487,6 +487,8 @@ def evaluate(eval_iter, model, args):
                            mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
                            )
 
+    a, b = torch.zeros(150), torch.zeros(150)
+
     # Evaluation
     total_len, total_loss = 0, 0.
     with torch.no_grad():
@@ -496,10 +498,14 @@ def evaluate(eval_iter, model, args):
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                loss, mems, _ = model(data, target, mems)
+                loss, mems, stats = model(data, target, mems)
                 loss = loss.float().mean().type_as(loss)
+            # b[0] can be larger than zero
+            # because of different number of groups for each example we use padding
+            if 'sum_of_losses_per_group_size' in stats.keys():
+                a += stats['sum_of_losses_per_group_size'].cpu()
+                b += stats['number_of_groups'].cpu()
             if warm:
-                # assert (mems is None) or mems.size(1) == model.mem_len
                 total_loss += seq_len * loss.item()
                 total_len += seq_len
 
