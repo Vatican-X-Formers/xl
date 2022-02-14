@@ -41,10 +41,6 @@ class LMOrderedIterator(object):
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = data.size(0) // bsz
 
-        # print('in data iterator')
-        # print(len(data))
-        # print(data.size())
-
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         data = data[:n_step * bsz]
 
@@ -65,30 +61,6 @@ class LMOrderedIterator(object):
 
         # Number of mini-batches
         self.n_batch = (self.data.size(0) + self.bptt - 1) // self.bptt
-
-        # So how this shit work
-        # I start with the stream of tokens, lets say 6k tokens
-        # I say that my batch_size is 10 and target_len is 60
-        # So I expect mini_batches of size (10, 60)
-        # Normally I could just divide 6k into chunks of 60 and then feed it to batcher
-        # But then I wouldn't use memory at all because I would 
-        # be processing consecutive elems in the same batch
-        # The solution here is to divide data onto batches
-        # So we get very big stripes at next batches if not shuffled would depened on previos one
-        # And there would be no dependency inside batches
-
-        # Robią jakieś kilka batchy warm-up'u
-        # Nie robią shift right w tym modelu, shift right jest robiony przy podawaniu danych
-        # Co to znaczy, znaczy to to, ze target jest przesuniety o jeden w prawo i jest 
-        # Zapewnienione ze target zawsze istnieje. Bierzemy input dla ktorego znamy kolejny znak,
-        # Więc target zawsze istnieje. Będę musiał dostosować funnel'a pod te specyfikacje zadania
-
-        # Ext len jest to dodatkowe ustawienie data loadera, ktore pozwala na feedowanie dluzszych inputow
-        # The thing that happens with data loader ext_len is that we make jumps over data that are tgt_len
-        # But we feed ext_len to the model actually
-        # So not only we use memory but we only use this last steps silently incorporated into model parameters
-
-        # Nie da się zagwarantować, ze input będzie podzielny przez sf, więc to będę musiał ogarnąć, jak w w2v
 
         self.last_iter = None
 
