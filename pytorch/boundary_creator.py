@@ -122,10 +122,13 @@ class TokenizerBoundaryCreator(BoundaryCreator):
 
         if boundaries_type == 'gpt2':
             self.tokenizer = Tokenizer.from_pretrained("gpt2")
+        elif boundaries_type == 'bpe':
+            print('robione bpe')
+            self.tokenizer = Tokenizer.from_file(f'../data/tokenizer/tokenizer-{boundaries_tokens}-tokens.json')
         else:
             raise NotImplementedError
 
-    def get_boundaries(self, data, n_chunks = 10):
+    def get_boundaries(self, data, n_chunks = 100):
         """
             Function that generates boundaries for given tensor of data
 
