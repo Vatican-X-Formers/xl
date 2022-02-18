@@ -131,8 +131,9 @@ def parse_args():
     dataset.add_argument('--dataset', type=str, default='wt103',
                          choices=['wt103', 'lm1b', 'enwik8', 'text8'],
                          help='Dataset name')
-    dataset.add_argument('--vocab', type=str, default='word', choices=['word', 'bpe'],
-                         help='Type of vocabulary')
+    dataset.add_argument('--boundaries_type', type=str, choices=['bpe', 'sentencepiece', 'wordpiece', 'gpt2'],
+                         default='bpe')
+    dataset.add_argument('--boundaries_tokens', type=int)
 
     model = parser.add_argument_group('model setup')
     model.add_argument('--n_layer', type=int, default=16,
@@ -183,9 +184,19 @@ def parse_args():
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
-    model.add_argument('--boundary_ids', type=str, default='[]', help='')
-    model.add_argument('--mask_type', type=str, default='')
-    model.add_argument('--corruption_probs', nargs="+", default=[0.0, 0.0, 0.0])
+
+    boundaries = parser.add_argument_group('boundary creator')
+    boundaries.add_argument('--move_prob', type=float, default=0.0)
+    boundaries.add_argument('--deletion_prob', type=float, default=0.0)
+    boundaries.add_argument('--insert_prob', type=float, default=0.0)
+    boundaries.add_argument('--clamp_group_sizes', action='store_true')
+    boundaries.add_argument('--min_group_length', type=int, default=0)
+    boundaries.add_argument('--max_group_length', type=int, default=1000000)
+    boundaries.add_argument('--mean_normal', type=float, default=5.5)
+    boundaries.add_argument('--std_normal', type=float, default=1.0)
+    boundaries.add_argument('--boundary_ids', type=str, default='[]')
+    boundaries.add_argument('--boundary_type', type=str, default='vanilla')
+    boundaries.add_argument('--boundary_tokens', type=int, default=0)
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -426,6 +437,7 @@ def update_dropatt(m, args):
 
 def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100, dataset='text8'):
     # Turn on evaluation mode which disables dropout.
+    raise NotImplementedError
     model.eval()
 
     if args.mem_len == 0:
@@ -487,27 +499,24 @@ def evaluate(eval_iter, model, args):
                            mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
                            )
 
-    a, b = torch.zeros(150), torch.zeros(150)
-
     # Evaluation
     total_len, total_loss = 0, 0.
     with torch.no_grad():
         mems = None
-        for i, (data, target, seq_len, warm) in enumerate(eval_iter):
+        for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                loss, mems, stats = model(data, target, mems)
+                loss, mems, stats = model(data, target, mems, boundaries)
                 loss = loss.float().mean().type_as(loss)
-            # b[0] can be larger than zero
-            # because of different number of groups for each example we use padding
+
             if 'sum_of_losses_per_group_size' in stats.keys():
                 a += stats['sum_of_losses_per_group_size'].cpu()
                 b += stats['number_of_groups'].cpu()
-            if warm:
-                total_loss += seq_len * loss.item()
-                total_len += seq_len
+
+            total_loss += seq_len * loss.item()
+            total_len += seq_len
 
     # Switch back to the training mode
     model.reset_length(tgt_len=args.tgt_len,
@@ -521,7 +530,6 @@ def evaluate(eval_iter, model, args):
 
 def gen_model_config(args, vocab, old_checkpoint=False): 
     ntokens = len(vocab)
-    boundary_ids = [vocab.sym2idx[c] for c in eval(args.boundary_ids)]
     model_config = {
         'n_token': ntokens,
         'n_layer': args.n_layer,
@@ -550,25 +558,27 @@ def gen_model_config(args, vocab, old_checkpoint=False):
         'activation_function': args.activation_function,
         'gather_stats': args.gather_stats,
         'old_checkpoint': old_checkpoint,
-        'boundary_ids': boundary_ids,
-        'corruption_probs': args.corruption_probs,
-        'mask_type': args.mask_type,
         }
     return model_config
 
 
-def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
-                    optimizer, device, delay_unscale, args):
+def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunks,
+                    scaler, optimizer, device, delay_unscale, args):
     cpu = torch.device('cpu')
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
+    
+    if boundaries_chunks is not None:
+        boundaries_i = boundaries_chunks[i].contiguous()
+    else:
+        boundaries_i = None
 
     if args.swap_mem and mems[i] is not None:
         mems[i] = mems[i].to(device, non_blocking=True)
 
     enable_autocast = args.fp16 and args.amp == 'pytorch'
     with torch.cuda.amp.autocast(enable_autocast):
-        loss, mems[i], stats = model(data_i, target_i, mems[i])
+        loss, mems[i], stats = model(data_i, target_i, mems[i], boundaries=boundaries_i)
         loss = loss.float().mean().type_as(loss) / args.batch_chunk
 
     if args.swap_mem and mems[i] is not None:
@@ -603,7 +613,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     mems = [None for _ in range(args.batch_chunk)]
     train_iter = tr_iter.get_fixlen_iter(start=last_iter)
 
-    for batch, (data, target, seq_len, _) in enumerate(train_iter, start=last_batch+1):
+    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=last_batch+1):
         log_step += 1
         target_tokens += target.numel()
 
@@ -612,18 +622,22 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
         data_chunks = torch.chunk(data, args.batch_chunk, 1)
         target_chunks = torch.chunk(target, args.batch_chunk, 1)
+        if boundaries is not None:
+            boundaries_chunks = torch.chunk(boundaries, args.batch_chunk, 1)
+        else:
+            boundaries_chunks = None
 
         for i in range(args.batch_chunk):
             if i < args.batch_chunk - 1 and isinstance(para_model, DistributedDataParallel):
                 with para_model.no_sync():
                     train_loss_chunk, stats = train_iteration(
-                        para_model, i, mems, data_chunks, target_chunks, scaler,
-                        optimizer, device, True, args
+                        para_model, i, mems, data_chunks, target_chunks, boundaries_chunks,
+                        scaler, optimizer, device, True, args
                     )
             else:
                 train_loss_chunk, stats = train_iteration(
-                    para_model, i, mems, data_chunks, target_chunks, scaler,
-                    optimizer, device, False, args
+                    para_model, i, mems, data_chunks, target_chunks, boundaries_chunks,
+                    scaler, optimizer, device, False, args
                 )
 
             train_loss += train_loss_chunk
@@ -635,10 +649,9 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
         stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
         
-        if run and train_step % args.text_generation_interval == 0:
-            generated_sample = sample_generation(vocab, model, args)
-            run['gen/text'].log(generated_sample)
-        
+        # if run and train_step % args.text_generation_interval == 0:
+            # generated_sample = sample_generation(vocab, model, args)
+            # run['gen/text'].log(generated_sample)
         # Finish of custom statistics
 
         if args.fp16:
@@ -752,25 +765,20 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                           )
 
             if args.eval_gt_boundaries:
+                assert False, 'currently not supported'
                 keep_fm = model.funnel_mode
-                keep_b_ids = model.boundary_ids
 
                 model.funnel_mode = 'custom'
                 assert args.dataset == 'text8'
-                model.boundary_ids = [vocab.sym2idx['_']]
-                model.corruption_probs = [0.0, 0.0, 0.0]
-                model.mask_type = 'boundary_ids'
 
                 val_loss_gt = evaluate(va_iter, model, args)
                 val_loss_gt = utils.distributed.all_reduce_item(val_loss_gt, op='mean')
 
                 model.funnel_mode = keep_fm
-                model.boundary_ids = keep_b_ids
-                model.corruption_probs = args.corruption_probs
-                model.mask_type = args.mask_type
 
             if run:
                 if args.eval_gt_boundaries:
+                    raise NotImplementedError
                     run['val/gt'].log(val_loss_gt, step=train_step)
                     run['val/diff_gt'].log(val_loss - val_loss_gt, step=train_step)
 
@@ -887,7 +895,19 @@ def main():
     ###########################################################################
     # Load data
     ###########################################################################
-    corpus = get_lm_corpus(args.data, args.dataset, args.vocab)
+    corpus = get_lm_corpus(args.data, 
+                           args.dataset,
+                           move_prob=args.move_prob,
+                           deletion_prob=args.deletion_prob,
+                           insert_prob=args.insert_prob,
+                           clamp_group_sizes=args.clamp_group_sizes,
+                           min_group_length=args.min_group_length,
+                           max_group_length=args.max_group_length,
+                           mean_normal=args.mean_normal,
+                           std_normal=args.std_normal,
+                           boundary_ids=args.boundary_ids,
+                           boundaries_type=args.boundaries_type,
+                           boundaries_tokens=args.boundaries_tokens)
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
