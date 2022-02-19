@@ -14,6 +14,11 @@ class BoundaryCreator():
         self.boundaries_type = boundaries_type
         if boundaries_type == 'ids':
             assert boundary_ids is not None and len(boundary_ids) > 0
+        
+        if boundaries_type in ['ids']:
+            self.extract_offline = False
+        elif boundaries_type in ['normal']:
+            self.extract_offline = False
 
         self.boundary_ids = boundary_ids
 
@@ -32,7 +37,7 @@ class BoundaryCreator():
         self.std_normal = std_normal
 
     def corrupt_boundaries(self, boundaries):
-        final_boundaries = torch.zeros_like(data, dtype=torch.bool)
+        final_boundaries = torch.zeros_like(boundaries, dtype=torch.bool)
 
         if torch.rand(1).item() < self.move_prob:
             batch_ids, elems_ids = boundaries.nonzero(as_tuple=True)
@@ -41,7 +46,7 @@ class BoundaryCreator():
                 dir -= 3
             else:
                 dir = dir - 3 + 1
-            moving_boundaries = ((elems_ids + dir) >= 0) & (data.size(1) > (elems_ids + dir))
+            moving_boundaries = ((elems_ids + dir) >= 0) & (boundaries.size(1) > (elems_ids + dir))
             batch_ids, elems_ids = batch_ids[moving_boundaries], elems_ids[moving_boundaries] + dir
             final_boundaries[(batch_ids, elems_ids)] = 1
         else:
@@ -112,13 +117,14 @@ class BoundaryCreator():
 
         boundaries = self.corrupt_boundaries(boundaries) 
 
-
         return boundaries
 
 
 class TokenizerBoundaryCreator(BoundaryCreator):
     def __init__(self, boundaries_type, boundaries_tokens, **kwargs):
         super().__init__(boundaries_type, boundaries_tokens, **kwargs)
+
+        self.extract_offline = True
 
         if boundaries_type == 'gpt2':
             self.tokenizer = Tokenizer.from_pretrained("gpt2")

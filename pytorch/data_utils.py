@@ -26,7 +26,8 @@ from utils.vocabulary import Vocab
 from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator, TokenizerBoundaryCreator
 
 class LMOrderedIterator(object):
-    def __init__(self, data, bsz, tgt_len, device='cpu', mem_len=None, ext_len=None, warmup=True):
+    def __init__(self, data, bsz, tgt_len, device='cpu', mem_len=None, ext_len=None, warmup=True,
+                    boundary_creator=None):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
@@ -46,17 +47,24 @@ class LMOrderedIterator(object):
 
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         data = data[:n_step * bsz]
-        boundaries = boundaries[:n_step * bsz]
 
         # Evenly divide the data across the bsz batches.
         self.data = data.view(bsz, -1).t().contiguous().pin_memory()
-        self.boundaries = boundaries.view(bsz, -1).t().contiguous().pin_memory()
 
         # Partition data for DistributedDataParallel
         world_size = utils.distributed.get_world_size()
         rank = utils.distributed.get_rank()
         self.data = self.data.chunk(world_size, dim=1)[rank]
-        self.boundaries = self.boundaries.chunk(world_size, dim=1)[rank]
+
+        if boundaries is not None:
+            boundaries = boundaries[:n_step * bsz]
+            self.boundaries = boundaries.view(bsz, -1).t().contiguous().pin_memory()
+            self.boundaries = self.boundaries.chunk(world_size, dim=1)[rank]
+        else:
+            assert boundary_creator is not None
+            self.boundaries = None
+
+        self.boundary_creator = boundary_creator
 
         # Number of mini-batches
         self.n_batch = (self.data.size(0) + self.tgt_len - 1) // self.tgt_len
@@ -82,7 +90,10 @@ class LMOrderedIterator(object):
         beg_idx = max(0, i - self.ext_len)
 
         data = self.data[beg_idx:end_idx].to(self.device, non_blocking=True)
-        boundaries = self.boundaries[beg_idx:end_idx].to(self.device, non_blocking=True)
+        if self.boundaries is not None:
+            boundaries = self.boundaries[beg_idx:end_idx].to(self.device, non_blocking=True)
+        else:
+            boundaries = self.boundary_creator.get_boundaries(data).transpose(0, 1)
         target = self.data[i+1:i+1+seq_len].to(self.device, non_blocking=True)
 
         return data, target, seq_len, boundaries
@@ -113,7 +124,7 @@ class Corpus(object):
         kwargs['boundary_ids'] = boundary_ids
         
         self.boundary_creator = get_boundary_creator(**kwargs)
-        extract_boundaries = isinstance(self.boundary_creator, TokenizerBoundaryCreator)
+        extract_boundaries = self.boundary_creator.extract_offline
 
         for split in ['train', 'valid', 'test']:
             dataset_path = os.path.join(path, f'{split}.txt')
@@ -133,7 +144,7 @@ class Corpus(object):
                 )
 
     def get_iterator(self, split, *args, **kwargs):
-        return LMOrderedIterator(self.data[split], *args, **kwargs)
+        return LMOrderedIterator(self.data[split], boundary_creator=self.boundary_creator, *args, **kwargs)
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
