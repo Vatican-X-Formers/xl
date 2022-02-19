@@ -89,7 +89,19 @@ def main():
     ###########################################################################
     # Load data
     ###########################################################################
-    corpus = get_lm_corpus(args.data, args.dataset, args.vocab)
+    corpus = get_lm_corpus(args.data, 
+                           args.dataset,
+                           move_prob=args.move_prob,
+                           deletion_prob=args.deletion_prob,
+                           insert_prob=args.insert_prob,
+                           clamp_group_sizes=args.clamp_group_sizes,
+                           min_group_length=args.min_group_length,
+                           max_group_length=args.max_group_length,
+                           mean_normal=args.mean_normal,
+                           std_normal=args.std_normal,
+                           boundary_ids=args.boundary_ids,
+                           boundaries_type=args.boundaries_type,
+                           boundaries_tokens=args.boundaries_tokens)
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
@@ -104,10 +116,10 @@ def main():
     te_iter = corpus.get_iterator('test', args.eval_batch_size, args.eval_tgt_len, device=device,mem_len=eval_mem_len, ext_len=args.ext_len)
     world_size = utils.distributed.get_world_size()
     print(f'We expect {te_iter.data.size(0)/args.eval_tgt_len} batches')
-    # data = [batch for batch in te_iter]
-    # batch = data[0]
-    # input_data, target, _, _ = batch
-    
+    data = [batch for batch in te_iter]
+    batch = data[0]
+    input_data, target, seq_len, boundaries = batch
+
     ###########################################################################
     # Build the model
     ###########################################################################
@@ -132,11 +144,11 @@ def main():
         model.eval()
         with torch.no_grad():
             target_test_len = 100
-            full_logits = model(input_data[:target_test_len, :1], None, None).cpu().detach()
+            full_logits = model(input_data[:target_test_len, :1], None, None, boundaries[:target_test_len, :1]).cpu().detach()
 
             for i in range(target_test_len):
                 print(i)
-                last_logit = model(input_data[:i + 1, :1], None, None).cpu().detach()[-1]
+                last_logit = model(input_data[:i + 1, :1], None, None, boundaries[:i + 1, :1]).cpu().detach()[-1]
                 assert torch.allclose(last_logit, full_logits[i], atol=1e-6) 
 
         print('The model passed the autoregresivity test')
