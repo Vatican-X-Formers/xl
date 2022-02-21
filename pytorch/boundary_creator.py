@@ -155,7 +155,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
         chunk_len = line_len // n_chunks
         boundaries = torch.zeros(len(line), dtype=torch.bool)
 
-        print(f'We extract boundaries from input of length {line_len}, chunk_len is {chunk_len}')
+        #print(f'We extract boundaries from input of length {line_len}, chunk_len is {chunk_len}')
         for i in range(n_chunks):
             l = chunk_len * i
             if i + 1 == n_chunks:
@@ -165,7 +165,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
                 r = chunk_len * (i + 1)
 
             groups_beg_ids += [a + l for a, _ in self.tokenizer.encode(line[l:r]).offsets]
-            print(f'We finished {i}-th chunk out of {n_chunks}. We encoded segment from {l} to {r}')
+            #print(f'We finished {i}-th chunk out of {n_chunks}. We encoded segment from {l} to {r}')
 
         assert r == line_len
         boundaries[groups_beg_ids] = True

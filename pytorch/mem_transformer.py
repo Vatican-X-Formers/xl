@@ -311,7 +311,7 @@ class Upsampler(nn.Module):
 
 
 class Downsampler(nn.Module):
-    def __init__(self, embedding_dim, downsample_factor, mode='linear', old_checkpoint=False):
+    def __init__(self, embedding_dim, downsample_factor, mode='linear'):
         super().__init__()
         self.mode = mode
         self.downsample_factor = downsample_factor
@@ -329,12 +329,9 @@ class Downsampler(nn.Module):
             assert self.downsample_factor == 1, 'Just a special requirement of using custom mode'
 
         if mode in ['naive', 'linear']:
-            if old_checkpoint:
-                self.leftmost_group = torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
-            else:
-                self.leftmost_group = nn.Parameter(
-                    torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
-                )
+            self.leftmost_group = nn.Parameter(
+                torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
+            )
         else:
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
     
@@ -396,7 +393,6 @@ class MemTransformerLM(nn.Module):
                  funnel_resample='naive',
                  activation_function='relu',
                  gather_stats=[],
-                 old_checkpoint=False,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -407,11 +403,7 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        if old_checkpoint:
-            self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs,
-                                              div_val=div_val)
-        else:
-            self.word_emb = nn.Embedding(n_token, d_model)
+        self.word_emb = nn.Embedding(n_token, d_model)
        
         self.drop = nn.Dropout(dropout)
 
@@ -473,7 +465,6 @@ class MemTransformerLM(nn.Module):
                     embedding_dim=d_model,
                     downsample_factor=shorten_factor,
                     mode=funnel_resample,
-                    old_checkpoint=old_checkpoint
                 ),
                 create_decoder_layers(funnel_layers),
                 Upsampler(
@@ -484,23 +475,8 @@ class MemTransformerLM(nn.Module):
                 create_decoder_layers(post_layers),
             ])
 
-        self.old_checkpoint = old_checkpoint
-
-        if old_checkpoint:
-            if tie_weight:
-                emb_layers = [i.weight for i in self.word_emb.emb_layers]
-            else:
-                emb_layers = None
-
-            emb_projs = self.word_emb.emb_projs
-            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-                                                    cutoffs, div_val=div_val,
-                                                    tie_projs=tie_projs,
-                                                    out_projs=emb_projs,
-                                                    out_layers_weights=emb_layers)
-        else:
-            self.final_cast = nn.Linear(d_model, n_token)
-            self.crit = torch.nn.CrossEntropyLoss(reduction='none')
+        self.final_cast = nn.Linear(d_model, n_token)
+        self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
         self.clamp_len = clamp_len       
@@ -713,11 +689,8 @@ class MemTransformerLM(nn.Module):
             logit = logit.view(-1, logit.size(-1))
             target = target.view(-1)
 
-            if self.old_checkpoint:
-                loss = -F.log_softmax(logit, dim=-1).gather(1, target.unsqueeze(1)).squeeze(1)
-            else:
-                loss = self.crit(logit, target)
-                loss = loss.view(tgt_len, -1)
+            loss = self.crit(logit, target)
+            loss = loss.view(tgt_len, -1)
 
 #             if not self.training and loss.size(0) == downsampling_mask.size(1):
                 # assert loss.size(0) == downsampling_mask.size(1), 'we dont use it for eval with context, it gets too messy'

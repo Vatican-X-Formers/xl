@@ -528,7 +528,7 @@ def evaluate(eval_iter, model, args):
     return total_loss / total_len
 
 
-def gen_model_config(args, vocab, old_checkpoint=False): 
+def gen_model_config(args, vocab): 
     ntokens = len(vocab)
     model_config = {
         'n_token': ntokens,
@@ -557,7 +557,6 @@ def gen_model_config(args, vocab, old_checkpoint=False):
         'funnel_resample': args.funnel_resample,
         'activation_function': args.activation_function,
         'gather_stats': args.gather_stats,
-        'old_checkpoint': old_checkpoint,
         }
     return model_config
 

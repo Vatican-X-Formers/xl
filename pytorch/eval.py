@@ -123,14 +123,7 @@ def main():
     ###########################################################################
     # Build the model
     ###########################################################################
-    if not args.autoreg:
-        checkpoint = load_checkpoint(args.ckpt_path)
-        names = [x[0] for x in list(checkpoint['model_state'].items())]
-        old_checkpoint = names[-1].startswith('crit')
-    else:
-        old_checkpoint = False
-
-    model_config = gen_model_config(args, vocab, old_checkpoint=old_checkpoint)
+    model_config = gen_model_config(args, vocab)
     model = MemTransformerLM(**model_config)
     model = model.to(device)
     if len(model.layers) > 1:
@@ -143,6 +136,7 @@ def main():
     if args.autoreg:
         model.eval()
         with torch.no_grad():
+            pdb.set_trace()
             target_test_len = 100
             full_logits = model(input_data[:target_test_len, :1], None, None, boundaries[:target_test_len, :1]).cpu().detach()
 
@@ -154,9 +148,23 @@ def main():
         print('The model passed the autoregresivity test')
         return
 
+    checkpoint = load_checkpoint(args.ckpt_path)
     model.load_state_dict(checkpoint['model_state'])
     model.eval()
 
+    with torch.no_grad():
+        target_test_len = 100
+        loss = model(input_data[:target_test_len, :1], target[:target_test_len, :1], None, boundaries[:target_test_len, :1])[0].cpu().detach()
+        tab_losses = []
+        for i in range(target_test_len):
+            x = input_data[:i + 1, 0].cpu().numpy()
+            sent = vocab.convert_to_sent(x)
+            x_boundaries = corpus.boundary_creator.get_boundaries(sent)
+            x_boundaries = x_boundaries.cuda()
+            elem_loss = model(input_data[:i + 1, :1], target[:i + 1, :1], None, x_boundaries.unsqueeze(1))
+            tab_losses.append(elem_loss[0][-1, -1])
+        pdb.set_trace()
+    
     test_sample = 'mary was not permitted to see them or to speak in her own defence at the tribunal she refused to offer a written defence unless elizabeth would guarantee a verdict of not guilty which elizabeth would not do although the casket letters were accepted by the inquiry as genuine after a study of the handwriting and of the information contained therein and were generally held to be certain proof of guilt if authentic the inquiry reached the conclusion that nothing was proven from the start this could have been '
     test_sample = test_sample.replace(' ', '_') 
     
