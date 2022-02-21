@@ -42,7 +42,7 @@ from torch.nn.parallel import DistributedDataParallel
 import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
-from mem_transformer import MemTransformerLM
+from hourglass import MemTransformerLM
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import benchmark
@@ -850,7 +850,7 @@ def main():
     with utils.distributed.sync_workers() as rank:
         if rank == 0:
             create_exp_dir(args.work_dir,
-                           scripts_to_save=['train.py', 'mem_transformer.py'],
+                           scripts_to_save=['train.py', 'hourglass.py'],
                            debug=args.debug)
 
     # Setup logging

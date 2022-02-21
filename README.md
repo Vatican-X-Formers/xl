@@ -20,7 +20,7 @@ Requirements - ask me to do a `pip freeze`
 	- It implements different ways to extract the boundaries from raw text, without processing anything by the model. It's used for topline experiments, it won't be used in the experiments with latent variable modelling the boundaries. 
 - data_utils.py
 	- It implements the data loader and dataset creation
-- mem_transformer.py
+- hourglass.py
 	- It implements the Hourglass model, based on implementation of Transformer XL
 - run_exp.sh
 	- Uses 2 positional arguments, config file and the number of gpus. Model parameters, training hyper-parameters and the dataset is specified in the .yaml config file

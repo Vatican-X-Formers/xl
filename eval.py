@@ -41,7 +41,7 @@ from torch.nn.parallel import DistributedDataParallel
 import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
-from mem_transformer import MemTransformerLM
+from hourglass import MemTransformerLM
 from train import parse_args, gen_model_config, sample_generation, evaluate 
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
