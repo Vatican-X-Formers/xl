@@ -4,7 +4,7 @@ Requirements - ask me to do a `pip freeze`
 
 ## Files
 
-- benchmark_code
+- benchmarks
 	- Contains independent benchmarks of different parts of the code
 - configs
 	- By now I have only focused on `text8` dataset. Whenever I decide to switch to another dataset there will be another directory level that would refer to the dataset. I care for not having two files that share the common prefix.  For each dataset I keep 3 configs that refer to scale of the trained model. It could be either small, medium or large.
