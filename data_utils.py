@@ -22,7 +22,7 @@ import torch
 
 import utils
 import pdb
-from utils.vocabulary import Vocab
+from vocabulary import Vocab
 from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator, TokenizerBoundaryCreator
 
 class LMOrderedIterator(object):

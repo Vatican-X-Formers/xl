@@ -57,10 +57,10 @@ import pdb
 def load_checkpoint(path):
     print(f'Starting path: {path}')
     path = os.path.dirname(path)
-    while path.split('/')[-1] in ['configs', 'xl', 'pytorch']:
+    while path.split('/')[-1] in ['configs', 'xl']:
         path = path = os.path.dirname(path)
  
-    path = os.path.join(path, 'xl/pytorch/LM-TFM/checkpoint_best.pt')
+    path = os.path.join(path, 'xl/LM-TFM/checkpoint_best.pt')
 
     dst = f'cuda:{torch.cuda.current_device()}'
     print(f'Loading checkpoint from {path}')
