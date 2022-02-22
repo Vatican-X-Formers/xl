@@ -26,16 +26,13 @@ from vocabulary import Vocab
 from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator, TokenizerBoundaryCreator
 
 class LMOrderedIterator(object):
-    def __init__(self, data, bsz, tgt_len, device='cpu', mem_len=None, ext_len=None, warmup=True,
-                    boundary_creator=None):
+    def __init__(self, data, bsz, tgt_len, device='cpu', ext_len=None, boundary_creator=None):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
         self.bsz = bsz
         self.tgt_len = tgt_len
         self.ext_len = ext_len if ext_len is not None else 0
-        self.mem_len = mem_len
-        self.warmup = warmup
 
         self.device = device
 
@@ -93,7 +90,10 @@ class LMOrderedIterator(object):
         if self.boundaries is not None:
             boundaries = self.boundaries[beg_idx:end_idx].to(self.device, non_blocking=True)
         else:
-            boundaries = self.boundary_creator.get_boundaries(data).transpose(0, 1)
+            boundaries = self.boundary_creator.get_boundaries(data)
+            if boundaries is not None:
+                print('not none')
+                boundaries = boundaries.transpose(0, 1)
         target = self.data[i+1:i+1+seq_len].to(self.device, non_blocking=True)
 
         return data, target, seq_len, boundaries
@@ -144,7 +144,7 @@ class Corpus(object):
                 )
 
     def get_iterator(self, split, *args, **kwargs):
-        return LMOrderedIterator(self.data[split], boundary_creator=self.boundary_creator, *args, **kwargs)
+        return LMOrderedIterator(self.data[split], boundary_creator=get_boundary_creator(**kwargs), *args)
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):

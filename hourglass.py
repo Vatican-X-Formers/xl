@@ -207,90 +207,15 @@ class RelPartialLearnableDecoderLayer(nn.Module):
         return output
 
 
-class AdaptiveEmbedding(nn.Module):
-    # Just more fancy embedding layer
-    # It exploits the fact that there exists tokens of different frequence in vocabulary
-    # It splits vocab into different subparts based on frequency and it assigns different dimensions to them
-    # Lesser frequency of occurence gets lower dimensional vector to train
-    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1,
-                 sample_softmax=False):
-        super(AdaptiveEmbedding, self).__init__()
-
-        self.n_token = n_token
-        self.d_embed = d_embed
-
-        self.cutoffs = cutoffs + [n_token]
-        self.div_val = div_val
-        self.d_proj = d_proj
-
-        self.emb_scale = d_proj ** 0.5
-
-        self.cutoff_ends = [0] + self.cutoffs
-
-        self.emb_layers = nn.ModuleList()
-        self.emb_projs = nn.ParameterList()
-        if div_val == 1:
-            self.emb_layers.append(
-                nn.Embedding(n_token, d_embed, sparse=(sample_softmax > 0))
-            )
-            if d_proj != d_embed:
-                self.emb_projs.append(nn.Parameter(torch.Tensor(d_proj, d_embed).zero_()))
-        else:
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i+1]
-                d_emb_i = d_embed // (div_val ** i)
-                self.emb_layers.append(nn.Embedding(r_idx-l_idx, d_emb_i))
-                self.emb_projs.append(nn.Parameter(torch.Tensor(d_proj, d_emb_i).zero_()))
-
-    def forward(self, inp):
-        if self.div_val == 1:
-            embed = self.emb_layers[0](inp)
-            if self.d_proj != self.d_embed:
-                embed = F.linear(embed, self.emb_projs[0])
-        else:
-            param = next(self.parameters())
-            inp_flat = inp.view(-1)
-            emb_flat = torch.zeros([inp_flat.size(0), self.d_proj],
-                                   dtype=param.dtype, device=param.device)
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-
-                mask_i = (inp_flat >= l_idx) & (inp_flat < r_idx)
-                indices_i = mask_i.nonzero(as_tuple=False).squeeze()
-
-                if indices_i.numel() == 0:
-                    continue
-
-                inp_i = inp_flat.index_select(0, indices_i) - l_idx
-                emb_i = self.emb_layers[i](inp_i)
-                emb_i = F.linear(emb_i, self.emb_projs[i]).to(emb_flat.dtype)
-
-                emb_flat.index_copy_(0, indices_i, emb_i)
-
-            embed = emb_flat.view(*inp.size(), self.d_proj)
-
-        embed.mul_(self.emb_scale)
-
-        return embed
-
-
 class Upsampler(nn.Module):
     def __init__(self, embedding_dim, upsample_factor, mode='linear'):
         super().__init__()
         self.upsample_factor = upsample_factor
         self.mode = mode
         self.ln = nn.LayerNorm(embedding_dim)
-        if mode == 'linear':
-            self.upsample_layer = nn.Linear(embedding_dim, embedding_dim * upsample_factor)
     
     def forward(self, x, residual, upsampling_mask = None):
-        if self.mode == 'linear':
-            # T x B x C -> B x T x C
-            x = x.transpose(0, 1)
-            x = self.upsample_layer(x)
-            x = x.reshape(x.size(0), x.size(1) * self.upsample_factor, -1)
-            x = x.transpose(0, 1)
-        elif self.mode == 'naive':
+        if self.mode == 'naive':
             x = x.repeat_interleave(self.upsample_factor, dim=0)
         elif self.mode == 'custom':
             assert upsampling_mask is not None
@@ -314,12 +239,7 @@ class Downsampler(nn.Module):
         super().__init__()
         self.mode = mode
         self.downsample_factor = downsample_factor
-        if mode == 'linear':
-            self.downsample_layer = nn.Linear(
-                embedding_dim * downsample_factor, 
-                embedding_dim
-            )
-        elif mode == 'naive':
+        if mode == 'naive':
             self.downsample_layer = nn.AvgPool1d(
                 kernel_size = downsample_factor, 
                 stride = downsample_factor
@@ -327,7 +247,7 @@ class Downsampler(nn.Module):
         elif mode == 'custom':
             assert self.downsample_factor == 1, 'Just a special requirement of using custom mode'
 
-        if mode in ['naive', 'linear']:
+        if mode in ['naive']: 
             self.leftmost_group = nn.Parameter(
                 torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
             )
@@ -355,17 +275,7 @@ class Downsampler(nn.Module):
             'tgt_len not divisible by sf'
 
         # T x B x C
-        if self.mode == 'linear':
-            # T x B x C -> B x T x C
-            x = x.transpose(0, 1)
-            x = x.reshape(
-                x.size(0), 
-                x.size(1) // sf, 
-                x.size(2) * sf 
-            )
-            x = self.downsample_layer(x)
-            x = x.transpose(0, 1)
-        elif self.mode == 'naive':
+        if self.mode == 'naive':
             # T x B x C -> B x T x C -> B x C x T
             x = x.transpose(0, 1).transpose(1, 2)
             x = self.downsample_layer(x)
@@ -421,9 +331,6 @@ class MemTransformerLM(nn.Module):
         self.mem_len = mem_len
         self.ext_len = ext_len
         
-        # It is very important shit, we don't support that
-        # assert self.ext_len == 0
-
         self.pre_lnorm = pre_lnorm
         if self.pre_lnorm:
             self.layer_norms = nn.ModuleList([

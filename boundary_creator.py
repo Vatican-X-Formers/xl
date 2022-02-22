@@ -89,6 +89,9 @@ class BoundaryCreator():
                 boundaries - (torch.BoolTensor) - [batch_size x seq_len]
         """
 
+        if self.boundaries_type == 'noboundaries':
+            return None
+
         data = data.transpose(0, 1) # batch_size x seq_len
         boundaries = torch.zeros_like(data, dtype=torch.bool)
 
@@ -174,7 +177,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
 
 
 def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
-    if boundaries_type in ['vanilla', 'ids', 'normal', 'space_dist', 'constant']:
+    if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
         filename = os.path.join(datadir, 'cache.pt')
     elif boundaries_type in ['gpt2']:
         filename = os.path.join(datadir, f'cache_{boundaries_type}.pt')
@@ -185,7 +188,7 @@ def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
 
 
 def get_boundary_creator(boundaries_type, **kwargs):
-    if boundaries_type in ['vanilla', 'ids', 'normal', 'space_dist', 'constant']:
+    if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
         return BoundaryCreator(boundaries_type, **kwargs)
     elif boundaries_type in ['gpt2', 'bpe', 'sentencepieces', 'wordpieces']:
         return TokenizerBoundaryCreator(boundaries_type, **kwargs)

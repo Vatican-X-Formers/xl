@@ -106,10 +106,6 @@ def parse_args():
                          help='Disable model evaluation')
     general.add_argument('--log_interval', type=int, default=10,
                          help='Report interval')
-    general.add_argument('--target_throughput', type=float, default=None,
-                         help='Target training throughput (for benchmarking)')
-    general.add_argument('--target_perplexity', type=float, default=None,
-                         help='Target validation perplexity (for benchmarking)')
     general.add_argument('--apex_amp_opt_level', type=str, default='O2',
                          choices=['O0', 'O1', 'O2', 'O3'],
                          help='Optimization level for apex amp')
@@ -131,9 +127,6 @@ def parse_args():
     dataset.add_argument('--dataset', type=str, default='wt103',
                          choices=['wt103', 'lm1b', 'enwik8', 'text8'],
                          help='Dataset name')
-    dataset.add_argument('--boundaries_type', type=str, choices=['bpe', 'sentencepiece', 'wordpiece', 'gpt2'],
-                         default='bpe')
-    dataset.add_argument('--boundaries_tokens', type=int)
 
     model = parser.add_argument_group('model setup')
     model.add_argument('--n_layer', type=int, default=16,
@@ -195,8 +188,8 @@ def parse_args():
     boundaries.add_argument('--mean_normal', type=float, default=5.5)
     boundaries.add_argument('--std_normal', type=float, default=1.0)
     boundaries.add_argument('--boundary_ids', type=str, default='[]')
-    boundaries.add_argument('--boundary_type', type=str, default='vanilla')
-    boundaries.add_argument('--boundary_tokens', type=int, default=0)
+    boundaries.add_argument('--boundaries_type', type=str, default='vanilla')
+    boundaries.add_argument('--boundaries_tokens', type=int, default=0)
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -612,7 +605,12 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     mems = [None for _ in range(args.batch_chunk)]
     train_iter = tr_iter.get_fixlen_iter(start=last_iter)
 
+    times = defaultdict(list)
+
     for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=last_batch+1):
+        t0 = time.time()
+        if batch > 1:
+            times['data_loader'].append(t3-t0)
         log_step += 1
         target_tokens += target.numel()
 
@@ -627,6 +625,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             boundaries_chunks = None
 
         for i in range(args.batch_chunk):
+            t1 = time.time()
             if i < args.batch_chunk - 1 and isinstance(para_model, DistributedDataParallel):
                 with para_model.no_sync():
                     train_loss_chunk, stats = train_iteration(
@@ -640,6 +639,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 )
 
             train_loss += train_loss_chunk
+            t2 = time.time()
+            times['forward'].append(t2-t1)
 
         # Custom stats added by me
         for k,v in stats.items():
@@ -821,6 +822,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         if is_final_step:
             break
 
+        t3 = time.time()
+
     return train_step, best_val_loss
 
 
@@ -863,6 +866,7 @@ def main():
     dllog_file = os.path.join(args.work_dir, dllog_file)
 
     if args.debug:
+        logging.info('This run is in DEBUG mode')
         log_file = os.devnull
         dllog_file = os.devnull
 
@@ -894,19 +898,22 @@ def main():
     ###########################################################################
     # Load data
     ###########################################################################
+    boundary_kwargs = {
+        'move_prob': args.move_prob,
+        'deletion_prob': args.deletion_prob,
+        'insert_prob':args.insert_prob,
+        'clamp_group_sizes':args.clamp_group_sizes,
+        'min_group_length':args.min_group_length,
+        'max_group_length':args.max_group_length,
+        'mean_normal':args.mean_normal,
+        'std_normal':args.std_normal,
+        'boundary_ids':args.boundary_ids,
+        'boundaries_type':args.boundaries_type,
+        'boundaries_tokens':args.boundaries_tokens,
+    }
     corpus = get_lm_corpus(args.data, 
                            args.dataset,
-                           move_prob=args.move_prob,
-                           deletion_prob=args.deletion_prob,
-                           insert_prob=args.insert_prob,
-                           clamp_group_sizes=args.clamp_group_sizes,
-                           min_group_length=args.min_group_length,
-                           max_group_length=args.max_group_length,
-                           mean_normal=args.mean_normal,
-                           std_normal=args.std_normal,
-                           boundary_ids=args.boundary_ids,
-                           boundaries_type=args.boundaries_type,
-                           boundaries_tokens=args.boundaries_tokens)
+                           **boundary_kwargs)
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
@@ -917,13 +924,13 @@ def main():
         eval_mem_len = args.mem_len + args.tgt_len - args.eval_tgt_len
 
     tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
-                                  device=device, ext_len=args.ext_len)
+                                  device, args.ext_len, **boundary_kwargs)
     va_iter = corpus.get_iterator('valid', args.eval_batch_size,
-                                  args.eval_tgt_len, device=device,
-                                  mem_len=eval_mem_len, ext_len=args.ext_len)
+                                  args.eval_tgt_len, device,
+                                  args.ext_len, **boundary_kwargs)
     te_iter = corpus.get_iterator('test', args.eval_batch_size,
-                                  args.eval_tgt_len, device=device,
-                                  mem_len=eval_mem_len, ext_len=args.ext_len)
+                                  args.eval_tgt_len, device,
+                                  args.ext_len, **boundary_kwargs)
 
     ###########################################################################
     # Build the model
@@ -1136,29 +1143,8 @@ def main():
         })
     dllogger.log(step=tuple(), data=summary)
 
-    passed = benchmark(
-        target_perplexity=args.target_perplexity,
-        test_perplexity=val_perplexity,
-        target_throughput=args.target_throughput,
-        test_throughput=meters['train_throughput'].avg
-        )
-    if not passed:
-        sys.exit(1)
-
 
 if __name__ == "__main__":
-    # Disable profiling executor
-    try:
-        torch._C._jit_set_profiling_executor(False)
-        torch._C._jit_set_profiling_mode(False)
-    except AttributeError:
-        pass
-
-    # Before we do anything with models, we want to ensure that we get fp16
-    # execution of torch.einsum in APEX AMP.
-    # Otherwise it'll default to "promote" mode, and we'll get fp32 operations.
-    # Note that running `--apex_amp_opt_level O2` will remove the need for this
-    # code, but it is still valid.
     if 'apex' in sys.modules:
         amp.register_half_function(torch, 'einsum')
 

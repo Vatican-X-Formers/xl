@@ -21,7 +21,8 @@ ARGS=""
 if [ -n "$DEBUG" ]
 then
     echo "DEBUG MODE"
-    ARGS+="--batch_chunk=8"
+    ARGS+="--batch_chunk=4"
+    ARGS+=" --debug"
 fi
 
 echo 'Finding free port'
