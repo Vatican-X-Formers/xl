@@ -144,6 +144,8 @@ class Corpus(object):
                 )
 
     def get_iterator(self, split, *args, **kwargs):
+        boundary_ids = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
+        kwargs['boundary_ids'] = boundary_ids
         return LMOrderedIterator(self.data[split], boundary_creator=get_boundary_creator(**kwargs), *args)
 
 
