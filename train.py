@@ -26,7 +26,6 @@ import time
 import warnings
 from collections import defaultdict
 
-import dllogger
 import numpy as np
 import torch
 import torch.nn as nn
@@ -94,8 +93,6 @@ def parse_args():
                          help='Run in debug mode (do not create exp dir)')
     general.add_argument('--log_all_ranks', action='store_true',
                          help='Enable logging from all distributed ranks')
-    general.add_argument('--dllog_file', type=str, default='train_log.json',
-                         help='Name of the DLLogger output file')
     general.add_argument('--txtlog_file', type=str, default='train_log.log',
                          help='Name of the txt log file')
     general.add_argument('--save_all', action='store_true',
@@ -242,8 +239,8 @@ def parse_args():
                           help='Swap memory tensors to cpu')
 
     val = parser.add_argument_group('validation setup')
-    val.add_argument('--eval_tgt_len', type=int, default=192,
-                     help='Number of tokens to predict for evaluation')
+    val.add_argument('--eval_tgt_lengths', nargs="+")
+    val.add_argument('--eval_total_lengths', nargs="+")
     val.add_argument('--eval_batch_size', type=int, default=16,
                      help='Eval batch size')
     val.add_argument('--eval_max_steps', type=int, default=-1,
@@ -264,28 +261,14 @@ def parse_args():
     args, _ = parser.parse_known_args()
 
     args.tied = not args.not_tied
+
+    assert len(args.eval_tgt_lengths) == len(args.eval_total_lengths)
     
     if args.ckpt_path == "":
         args.ckpt_path = config_args.config_file
 
     if args.d_embed < 0:
         args.d_embed = args.d_model
-
-    if args.ext_len < 0:
-        raise RuntimeError('Extended context length must be non-negative')
-
-    if args.mem_len == 0:
-        if args.eval_tgt_len > args.ext_len + args.tgt_len:
-            raise RuntimeError('eval_tgt_len should be <= tgt_len + ext_len; '
-                               f'eval_tgt_len: {args.eval_tgt_len}, '
-                               f'tgt_len: {args.tgt_len}, '
-                               f'ext_len: {args.ext_len}')
-    else:
-        if args.eval_tgt_len > args.mem_len + args.tgt_len:
-            raise RuntimeError('eval_tgt_len should be <= tgt_len + mem_len; '
-                               f'eval_tgt_len: {args.eval_tgt_len}, '
-                               f'tgt_len: {args.tgt_len}, '
-                               f'mem_len: {args.mem_len}')
 
     if args.batch_size % args.batch_chunk != 0:
         raise RuntimeError('Batch size needs to be divisible by batch chunk')
@@ -430,7 +413,6 @@ def update_dropatt(m, args):
 
 def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100, dataset='text8'):
     # Turn on evaluation mode which disables dropout.
-    raise NotImplementedError
     model.eval()
 
     if args.mem_len == 0:
@@ -475,21 +457,22 @@ def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100
     return generated_sample
 
 
-def evaluate(eval_iter, model, args):
+def evaluate(eval_iter, model, args, eval_tgt_len, eval_total_len):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
     # If the model does not use memory at all, make the ext_len longer.
     # Otherwise, make the mem_len longer and keep the ext_len the same.
     if args.mem_len == 0:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len + args.tgt_len - args.eval_tgt_len,
-                           mem_len=args.mem_len
+        model.reset_length(tgt_len=eval_tgt_len,
+                           ext_len=eval_total_len - eval_tgt_len,
+                           mem_len=0
                            )
     else:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len,
-                           mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
+        assert args.ext_len == 0
+        model.reset_length(tgt_len=eval_tgt_len,
+                           ext_len=0,
+                           mem_len=eval_total_len - eval_tgt_len,
                            )
 
     # Evaluation
@@ -589,7 +572,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
     return train_loss, stats
 
 
-def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
+def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, scaler, vocab, epoch,
           last_batch, last_iter, train_step, best_val_loss, meters,
           timeout_handler, device, args):
@@ -727,24 +710,12 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     run[k].log(np.array(v).mean(), step=train_step)
                 stats_agg = defaultdict(list)
 
-            dllogger_data = {
-                'epoch': epoch,
-                'train_batch': batch+1,
-                'lr': lr,
-                'train_time/batch': avg_elapsed * 1000,
-                'train_throughput': throughput,
-                'train_loss': cur_loss,
-                }
-
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(cur_loss / math.log(2))
-                dllogger_data['train_bits_per_character'] = cur_loss / math.log(2)
             else:
                 log_str += ' | ppl {:9.2f}'.format(math.exp(cur_loss))
-                dllogger_data['train_perplexity'] = math.exp(cur_loss)
 
             logging.info(log_str)
-            dllogger.log(step=tuple([train_step]), data=dllogger_data)
 
         do_periodic_eval = train_step % args.eval_interval == 0
         is_final_step = train_step == args.max_step
@@ -752,8 +723,21 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         
         if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
             eval_start_time = time.time()
-            val_loss = evaluate(va_iter, model, args)
-            val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
+
+            eval_tgt_lengths = args.eval_tgt_lengths
+            eval_total_lengths = args.eval_total_lengths
+
+            val_losses = []
+
+            for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
+                val_loss = evaluate(va_iters[i], model, args, eval_tgt_len, eval_total_len)
+                val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
+                val_losses.append(val_loss)
+                if run:
+                    run[f'val/loss_tgt{eval_tgt_len}_total{eval_total_len}'].log(val_loss, step=train_step)
+
+            # we assume that first one is the main one
+            val_loss = val_losses[0]
 
             logging.info('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
@@ -764,40 +748,16 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                           val_loss,
                           )
 
-            if args.eval_gt_boundaries:
-                assert False, 'currently not supported'
-                keep_fm = model.funnel_mode
-
-                model.funnel_mode = 'custom'
-                assert args.dataset == 'text8'
-
-                val_loss_gt = evaluate(va_iter, model, args)
-                val_loss_gt = utils.distributed.all_reduce_item(val_loss_gt, op='mean')
-
-                model.funnel_mode = keep_fm
-
             if run:
-                if args.eval_gt_boundaries:
-                    raise NotImplementedError
-                    run['val/gt'].log(val_loss_gt, step=train_step)
-                    run['val/diff_gt'].log(val_loss - val_loss_gt, step=train_step)
-
                 run['val/loss'].log(val_loss, step=train_step)
-
-            dllogger_data = {
-                'valid_elapsed': (time.time() - eval_start_time),
-                'valid_loss': val_loss,
-                }
 
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
-                dllogger_data['valid_bits_per_character'] = val_loss / math.log(2)
             else:
                 log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
-                dllogger_data['valid_perplexity'] = math.exp(val_loss)
+
             logging.info(log_str)
             logging.info('-' * 100)
-            dllogger.log(step=tuple([train_step]), data=dllogger_data)
 
             last_iter = tr_iter.last_iter
 
@@ -838,6 +798,7 @@ def main():
         )
         print(f'{args.local_rank}: thread affinity: {affinity}')
 
+
     # Initialize device and distributed backend
     torch.cuda.set_device(args.local_rank)
     l2_promote()
@@ -861,20 +822,15 @@ def main():
         log_file = f'train_log_rank_{utils.distributed.get_rank()}.log'
     else:
         log_file = args.txtlog_file
-    dllog_file = args.dllog_file
     log_file = os.path.join(args.work_dir, log_file)
-    dllog_file = os.path.join(args.work_dir, dllog_file)
 
     if args.debug:
         logging.info('This run is in DEBUG mode')
         log_file = os.devnull
-        dllog_file = os.devnull
 
     utils.exp_utils.setup_logging(log_all_ranks=args.log_all_ranks,
                                   filename=log_file,
                                   )
-    utils.exp_utils.setup_dllogger(enabled=True, filename=dllog_file)
-
     if args.profile:
         try:
             pyprof.init(enable_function_stack=True)
@@ -882,7 +838,6 @@ def main():
             warnings.warn('Called pyprof.init() but pyprof is not available')
 
     logging.info(args)
-    dllogger.log(step='PARAMETER', data=vars(args))
 
     logging.info(f'world size: {utils.distributed.get_world_size()}')
 
@@ -918,19 +873,29 @@ def main():
     vocab = corpus.vocab
     args.n_token = ntokens
 
-    if args.mem_len == 0:
-        eval_mem_len = 0
-    else:
-        eval_mem_len = args.mem_len + args.tgt_len - args.eval_tgt_len
+    eval_tgt_lengths = args.eval_tgt_lengths
+    eval_total_lengths = args.eval_total_lengths
 
     tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
                                   device, args.ext_len, **boundary_kwargs)
-    va_iter = corpus.get_iterator('valid', args.eval_batch_size,
-                                  args.eval_tgt_len, device,
-                                  args.ext_len, **boundary_kwargs)
-    te_iter = corpus.get_iterator('test', args.eval_batch_size,
-                                  args.eval_tgt_len, device,
-                                  args.ext_len, **boundary_kwargs)
+
+    va_iters, te_iters = [], []
+
+    for eval_tgt_len, eval_total_len in zip(eval_tgt_lengths, eval_total_lengths):
+        if args.mem_len == 0:
+            eval_ext_len = eval_total_len - eval_tgt_len
+        else:
+            assert args.ext_len == 0
+            eval_ext_len = 0
+            
+        va_iter = corpus.get_iterator('valid', args.eval_batch_size,
+                                      eval_tgt_len, device,
+                                      eval_ext_len, **boundary_kwargs)
+        te_iter = corpus.get_iterator('test', args.eval_batch_size,
+                                      eval_tgt_len, device,
+                                      eval_ext_len, **boundary_kwargs)
+        va_iters.append(va_iter)
+        te_iters.append(te_iter)
 
     ###########################################################################
     # Build the model
@@ -1073,7 +1038,7 @@ def main():
                     if args.roll:
                         tr_iter.roll(seed=args.seed + epoch)
                     train_step, best_val_loss = train(
-                        tr_iter, va_iter, model, para_model, model_config,
+                        tr_iter, va_iters, model, para_model, model_config,
                         optimizer, optimizer_sparse, scheduler,
                         scheduler_sparse, scaler, vocab, epoch, last_batch,
                         last_iter, train_step, best_val_loss, meters,
@@ -1099,10 +1064,19 @@ def main():
     if not args.debug and not args.no_eval:
         # Run on test data.
         test_start_time = time.time()
-        with torch.autograd.profiler.emit_nvtx(enabled=args.profile):
-            test_loss = evaluate(te_iter, model, args)
-            test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
+
+        test_losses = []
+
+        for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
+            test_loss = evaluate(te_iters[i], model, args, eval_tgt_len, eval_total_len)
+            test_loss = utils.distributed.all_reduce_item(test_loss, op='mean')
+            test_losses.append(test_loss)
+            if run:
+                run[f'test/loss_tgt{eval_tgt_len}_total{eval_total_len}'].log(test_loss, step=train_step)
+
         test_elapsed = time.time() - test_start_time
+
+        test_loss = test_losses[0]
 
         logging.info('=' * 100)
         if args.dataset in ['enwik8', 'text8']:
@@ -1113,7 +1087,6 @@ def main():
                 test_elapsed, test_loss, math.exp(test_loss)))
         if run:
             run['test_loss'].log(test_loss, step=train_step)
-            run['test_ppl'].log(math.exp(test_loss), step=train_step)
 
         logging.info('=' * 100)
 
@@ -1141,7 +1114,6 @@ def main():
         'valid_loss': best_val_loss,
         'valid_perplexity': val_perplexity,
         })
-    dllogger.log(step=tuple(), data=summary)
 
 
 if __name__ == "__main__":
