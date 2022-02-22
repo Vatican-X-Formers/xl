@@ -12,6 +12,8 @@ Requirements - ask me to do a `pip freeze`
 	- Code copied from Nvidia's Transformer XL repo
 	- It implements some functions for DDP, logging etc. 
 	- I'd recommend to never touch this files ;p
+- data
+	- Code copied from Transformer XL repo, downloads and does initial preprocessing of text8
 - train.py
 - eval.py
 - vocabulary.py
