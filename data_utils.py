@@ -60,6 +60,9 @@ class LMOrderedIterator(object):
         else:
             assert boundary_creator is not None
             self.boundaries = None
+            if boundary_creator.boundaries_type in ['space_dist', 'normal']:
+                self.boundaries = boundary_creator.get_boundaries(self.data).transpose(0, 1)
+                print(self.boundaries.size(), 'mem')
 
         self.boundary_creator = boundary_creator
 

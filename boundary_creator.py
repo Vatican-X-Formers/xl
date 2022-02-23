@@ -72,7 +72,7 @@ class BoundaryCreator():
 
     def boundaries_from_group_sizes(self, boundaries, group_sizes):
         x = group_sizes.cumsum(dim=-1)
-        y = (x < data.size(1))
+        y = (x < boundaries.size(1))
         batch_ids, seq_ids = y.nonzero(as_tuple=True)
         bound_ids = x[(batch_ids, seq_ids)]
         boundaries[(batch_ids, bound_ids)] = True
@@ -103,8 +103,8 @@ class BoundaryCreator():
                              std=self.std_normal, 
                              size=data.size(),
                              )
-            group_sizes = group_sizes.round().clamp(min_group_length, max_group_length).long().to(data.device)
-            boundaries = self.boundaries_from_group_sizes(group_sizes)
+            group_sizes = group_sizes.round().clamp(self.min_group_length, self.max_group_length).long().to(data.device)
+            boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
         elif boundaries_type == "space_dist":
             # These are word lengths extracted from text8 dataset
             space_dist = [632308, 2401024, 3410951, 2733289, 2023812, 1447078, 1407995, \
@@ -177,7 +177,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
 
 
 def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
-    if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
+    if boundaries_type in ['noboundaries', 'ids', 'constant', 'normal', 'space_dist']:
         filename = os.path.join(datadir, 'cache.pt')
     elif boundaries_type in ['gpt2']:
         filename = os.path.join(datadir, f'cache_{boundaries_type}.pt')
