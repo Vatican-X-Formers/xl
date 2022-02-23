@@ -105,7 +105,7 @@ class BoundaryCreator():
                              )
             group_sizes = group_sizes.round().clamp(self.min_group_length, self.max_group_length).long().to(data.device)
             boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
-        elif boundaries_type == "space_dist":
+        elif self.boundaries_type == "space_dist":
             # These are word lengths extracted from text8 dataset
             space_dist = [632308, 2401024, 3410951, 2733289, 2023812, 1447078, 1407995, \
                            1071319, 765731, 517567, 282529, 162820, 87729, 38597, 13429]
@@ -114,7 +114,7 @@ class BoundaryCreator():
             group_sizes = torch.multinomial(input=space_dist.float(), num_samples=data.numel() ,replacement=True)
             group_sizes = group_sizes.reshape(data.size()).long().to(data.device)
             group_sizes += 2 # This is the shift of the distribution
-            boundaries = self.boundaries_from_group_sizes(group_sizes)
+            boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
         else:
             raise NotImplemented
 
