@@ -181,7 +181,7 @@ def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
         filename = os.path.join(datadir, 'cache.pt')
     elif boundaries_type in ['gpt2']:
         filename = os.path.join(datadir, f'cache_{boundaries_type}.pt')
-    elif boundaries_type in ['bpe', 'wordpieces', 'sentencepieces']:
+    else:
         assert boundaries_tokens > 0 
         filename = os.path.join(datadir, f'cache_{boundaries_type}_{boundaries_tokens}.pt')
     return filename
@@ -190,10 +190,8 @@ def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
 def get_boundary_creator(boundaries_type, **kwargs):
     if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
         return BoundaryCreator(boundaries_type, **kwargs)
-    elif boundaries_type in ['gpt2', 'bpe', 'sentencepieces', 'wordpieces']:
-        return TokenizerBoundaryCreator(boundaries_type, **kwargs)
     else:
-        return NotImplementedError
+        return TokenizerBoundaryCreator(boundaries_type, **kwargs)
 
 
 if __name__ == '__main__':
