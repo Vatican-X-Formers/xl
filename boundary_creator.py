@@ -131,7 +131,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
 
         if boundaries_type == 'gpt2':
             self.tokenizer = Tokenizer.from_pretrained("gpt2")
-        elif boundaries_type == 'bpe':
+        elif boundaries_type in ['bpe', 'unigram', 'wordpiece', 'bpe_drop0.1', 'bpe_drop0.2']:
             self.tokenizer = Tokenizer.from_file(f'data/tokenizer/{boundaries_type}-{boundaries_tokens}.json')
         else:
             raise NotImplementedError
