@@ -553,23 +553,23 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
 
     enable_autocast = args.fp16 and args.amp == 'pytorch'
     with torch.cuda.amp.autocast(enable_autocast):
-        loss, mems[i], stats = model(data_i, target_i, mems[i], boundaries=boundaries_i)
-        loss = loss.float().mean().type_as(loss) / args.batch_chunk
+        seq_loss, mems[i], stats, aux_loss = model(data_i, target_i, mems[i], boundaries=boundaries_i)
+        seq_loss = seq_loss.float().mean().type_as(seq_loss)
+        total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
     if args.swap_mem and mems[i] is not None:
         mems[i] = mems[i].to(cpu, non_blocking=True)
 
     if args.fp16:
         if args.amp == 'pytorch':
-            scaler.scale(loss).backward()
+            scaler.scale(total_loss).backward()
         elif args.amp == 'apex':
-            with amp.scale_loss(loss, optimizer, delay_unscale=delay_unscale) as scaled_loss:
+            with amp.scale_loss(total_loss, optimizer, delay_unscale=delay_unscale) as scaled_loss:
                 scaled_loss.backward()
     else:
-        loss.backward()
+        total_loss.backward()
 
-    train_loss = loss.float().item()
-    return train_loss, stats
+    return seq_loss.item(), stats
 
 
 def train(tr_iter, va_iters, model, para_model, model_config, optimizer,

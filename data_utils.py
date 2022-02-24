@@ -95,7 +95,6 @@ class LMOrderedIterator(object):
         else:
             boundaries = self.boundary_creator.get_boundaries(data)
             if boundaries is not None:
-                print('not none')
                 boundaries = boundaries.transpose(0, 1)
         target = self.data[i+1:i+1+seq_len].to(self.device, non_blocking=True)
 

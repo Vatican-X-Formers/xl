@@ -289,6 +289,45 @@ class Downsampler(nn.Module):
 
         return x 
 
+class BoundaryPredictor(nn.Module):
+    def __init__(self, mode, d_model, threshold = 0.5):
+        super().__init__()
+        self.mode = mode
+        self.threshold = threshold
+
+        if mode == 'linear_cast':
+            self.boundary_predictor = nn.Linear(d_model, 1)
+            self.loss = nn.BCEWithLogitsLoss()
+
+    def forward(self, hidden, boundaries_gt=None):
+        # Boundaries are of shape [seq_len x bs]
+        # Hidden is of shape [seq_len x bs x d_model]
+        if self.mode == 'linear_cast':
+            hidden = hidden[:-1]
+            boundaries_gt = boundaries_gt[1:].float()
+            
+            preds = self.boundary_predictor(hidden).squeeze(-1)
+            loss = self.loss(preds, boundaries_gt)
+
+            preds = torch.sigmoid(preds) >= self.threshold
+
+            boundaries_gt = boundaries_gt.bool()
+
+            TP = ((preds == boundaries_gt) & boundaries_gt).sum().item()
+            FP = ((preds != boundaries_gt) & boundaries_gt).sum().item()
+            FN = ((preds != boundaries_gt) & (~boundaries_gt)).sum().item()
+
+            acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
+            if TP == 0:
+                precision, recall = 0, 0
+            else:
+                precision = TP/(TP+FP)
+                recall = TP/(TP+FN)
+
+            pad = torch.ones((1, preds.size(1)), dtype=preds.dtype, device=preds.device)
+            preds = torch.cat([pad, preds], dim=0)
+
+        return preds, loss, acc, precision, recall
 
 class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_layer, n_head, d_model, d_head, d_inner,
@@ -380,6 +419,8 @@ class MemTransformerLM(nn.Module):
                 ),
                 create_decoder_layers(post_layers),
             ])
+
+        self.boundary_predictor = BoundaryPredictor(mode='linear_cast', d_model=d_model)
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -563,6 +604,12 @@ class MemTransformerLM(nn.Module):
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
+                _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+                stats['acc_boundaries'] = acc_boundaries
+                stats['loss_boundaries'] = loss_boundaries.item()
+                stats['precision'] = precision
+                stats['recall'] = recall
+
                 residual = hidden
                 hidden = layers(hidden, mems[0] if mems is not None else None, downsampling_mask=downsampling_mask)
                 current_sf *= layers.downsample_factor
@@ -610,7 +657,7 @@ class MemTransformerLM(nn.Module):
                     # stats['sum_of_losses_per_group_size'] = sum_of_losses_per_group_size
                     # stats['number_of_groups'] = number_of_groups
 
-            return loss, new_mems, stats
+            return loss, new_mems, stats, loss_boundaries
         else:
             # Generation mode, we return raw logits
             return logit
