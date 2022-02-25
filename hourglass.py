@@ -610,7 +610,7 @@ class MemTransformerLM(nn.Module):
 
                 if getattr(self, 'boundary_predictor', None) is not None:
                     if self.boundary_predictor.mode == 'linear':
-                        _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+                        _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries & (~(data == 0)))
                         stats['acc_boundaries'] = acc_boundaries
                         stats['loss_boundaries'] = loss_boundaries.item()
                         stats['precision'] = precision
