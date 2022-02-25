@@ -297,7 +297,7 @@ class BoundaryPredictor(nn.Module):
 
         if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
-            self.loss = nn.BCEWithLogitsLoss()
+            self.loss = nn.BCEWithLogitsLoss(weights=torch.tensor([1, 5]).float())
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
@@ -313,9 +313,9 @@ class BoundaryPredictor(nn.Module):
 
             boundaries_gt = boundaries_gt.bool()
 
-            TP = ((preds == boundaries_gt) & boundaries_gt).sum().item()
-            FP = ((preds != boundaries_gt) & boundaries_gt).sum().item()
-            FN = ((preds != boundaries_gt) & (~boundaries_gt)).sum().item()
+            TP = ((preds == boundaries_gt) & preds).sum().item()
+            FP = ((preds != boundaries_gt) & preds).sum().item()
+            FN = ((preds != boundaries_gt) & (~preds)).sum().item()
 
             acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
             if TP == 0:
@@ -558,7 +558,7 @@ class MemTransformerLM(nn.Module):
         return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()   
 
 
-    def forward(self, data, target, mems, boundaries=None):
+    def forward(self, data, target, mems, boundaries=None, special=False):
         # I can keep track of training stats and log them
         stats = {}
 
@@ -605,13 +605,19 @@ class MemTransformerLM(nn.Module):
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
+                if special:
+                    hidden = hidden.clone().detach()
+
                 if getattr(self, 'boundary_predictor', None) is not None:
                     if self.boundary_predictor.mode == 'linear':
-                        _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries & ~(data == 0))
+                        _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
                         stats['acc_boundaries'] = acc_boundaries
                         stats['loss_boundaries'] = loss_boundaries.item()
                         stats['precision'] = precision
                         stats['recall'] = recall
+                
+                if special:
+                    return loss_boundaries, stats
 
                 residual = hidden
                 hidden = layers(hidden, mems[0] if mems is not None else None, downsampling_mask=downsampling_mask)
