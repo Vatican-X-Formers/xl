@@ -297,7 +297,7 @@ class BoundaryPredictor(nn.Module):
 
         if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
-            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([1, 5]).float())
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([1, 1.5]).float())
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
