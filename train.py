@@ -174,6 +174,7 @@ def parse_args():
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
+    model.add_argument('--boundary_predictor', type=str, default='none', help='')
 
     boundaries = parser.add_argument_group('boundary creator')
     boundaries.add_argument('--move_prob', type=float, default=0.0)
@@ -476,7 +477,7 @@ def evaluate(eval_iter, model, args, eval_tgt_len, eval_total_len):
                            )
 
     # Evaluation
-    total_len, total_loss = 0, 0.
+    total_len, total_loss, total_aux_loss = 0, 0., 0.
     with torch.no_grad():
         mems = None
         for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
@@ -484,7 +485,7 @@ def evaluate(eval_iter, model, args, eval_tgt_len, eval_total_len):
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                loss, mems, stats = model(data, target, mems, boundaries)
+                loss, mems, stats, aux_loss = model(data, target, mems, boundaries)
                 loss = loss.float().mean().type_as(loss)
 
             if 'sum_of_losses_per_group_size' in stats.keys():
@@ -533,6 +534,7 @@ def gen_model_config(args, vocab):
         'funnel_resample': args.funnel_resample,
         'activation_function': args.activation_function,
         'gather_stats': args.gather_stats,
+        'boundary_predictor': args.boundary_predictor,
         }
     return model_config
 

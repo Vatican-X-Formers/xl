@@ -168,7 +168,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
                 r = chunk_len * (i + 1)
 
             groups_beg_ids += [a + l for a, _ in self.tokenizer.encode(line[l:r]).offsets]
-            print(f'We finished {i}-th chunk out of {n_chunks}. We encoded segment from {l} to {r}')
+            #print(f'We finished {i}-th chunk out of {n_chunks}. We encoded segment from {l} to {r}')
 
         assert r == line_len
         boundaries[groups_beg_ids] = True

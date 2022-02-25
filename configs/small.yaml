@@ -19,20 +19,20 @@ train: &train
    max_step: 200000
    tgt_len: 2048
    mem_len: 0
-   eval_tgt_len: 2048
+   eval_tgt_lengths: [512]
+   eval_total_lengths: [2048]
    batch_size: 8
    multi_gpu: ddp
    log_interval: 100
-   eval_interval: 5000
+   eval_interval: 10000
    text_generation_interval: 25000
    batch_chunk: 1
    pre_lnorm: false
-   funnel_config: "[2, (8, 2), 2]"
-   funnel_resample: naive
+   funnel_config: "[2, (8, 1), 2]"
+   funnel_resample: custom
    activation_function: relu
-   boundaries_type: 'vanilla'
-   boundaries_tokens: 20000
-   boundary_ids: '["_"]'
+   boundaries_type: 'wordpiece'
+   boundaries_tokens: 5000
 
 default:
    train:

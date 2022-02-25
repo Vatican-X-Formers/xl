@@ -295,14 +295,14 @@ class BoundaryPredictor(nn.Module):
         self.mode = mode
         self.threshold = threshold
 
-        if mode == 'linear_cast':
+        if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
             self.loss = nn.BCEWithLogitsLoss()
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
-        if self.mode == 'linear_cast':
+        if self.mode == 'linear':
             hidden = hidden[:-1]
             boundaries_gt = boundaries_gt[1:].float()
             
@@ -341,6 +341,7 @@ class MemTransformerLM(nn.Module):
                  funnel_resample='naive',
                  activation_function='relu',
                  gather_stats=[],
+                 boundary_predictor='none',
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -419,8 +420,7 @@ class MemTransformerLM(nn.Module):
                 ),
                 create_decoder_layers(post_layers),
             ])
-
-        self.boundary_predictor = BoundaryPredictor(mode='linear_cast', d_model=d_model)
+            self.boundary_predictor = BoundaryPredictor(mode=boundary_predictor, d_model=d_model)
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -592,6 +592,7 @@ class MemTransformerLM(nn.Module):
         current_sf = 1 # We keep that to regulate mem_len and clamp_len in shortened layers
         mems_index = 0 # It points to current/next stack of Transformer layers for which we need mems
         new_mems = [] # Here we keep outputs and mems for the next steps, we also take residual from here
+        loss_boundaries = 0 # default init beacause we later return it
 
         for i in range(len(self.layers)):
             layers = self.layers[i]
@@ -604,11 +605,13 @@ class MemTransformerLM(nn.Module):
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
                 current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
-                _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
-                stats['acc_boundaries'] = acc_boundaries
-                stats['loss_boundaries'] = loss_boundaries.item()
-                stats['precision'] = precision
-                stats['recall'] = recall
+                if getattr(self, 'boundary_predictor', None) is not None:
+                    if self.boundary_predictor.mode == 'linear':
+                        _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries & ~(data == 0))
+                        stats['acc_boundaries'] = acc_boundaries
+                        stats['loss_boundaries'] = loss_boundaries.item()
+                        stats['precision'] = precision
+                        stats['recall'] = recall
 
                 residual = hidden
                 hidden = layers(hidden, mems[0] if mems is not None else None, downsampling_mask=downsampling_mask)
