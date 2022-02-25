@@ -89,33 +89,58 @@ def main():
     ###########################################################################
     # Load data
     ###########################################################################
+    boundary_kwargs = {
+        'move_prob': args.move_prob,
+        'deletion_prob': args.deletion_prob,
+        'insert_prob':args.insert_prob,
+        'clamp_group_sizes':args.clamp_group_sizes,
+        'min_group_length':args.min_group_length,
+        'max_group_length':args.max_group_length,
+        'mean_normal':args.mean_normal,
+        'std_normal':args.std_normal,
+        'boundary_ids':args.boundary_ids,
+        'boundaries_type':args.boundaries_type,
+        'boundaries_tokens':args.boundaries_tokens,
+    }
     corpus = get_lm_corpus(args.data, 
                            args.dataset,
-                           move_prob=args.move_prob,
-                           deletion_prob=args.deletion_prob,
-                           insert_prob=args.insert_prob,
-                           clamp_group_sizes=args.clamp_group_sizes,
-                           min_group_length=args.min_group_length,
-                           max_group_length=args.max_group_length,
-                           mean_normal=args.mean_normal,
-                           std_normal=args.std_normal,
-                           boundary_ids=args.boundary_ids,
-                           boundaries_type=args.boundaries_type,
-                           boundaries_tokens=args.boundaries_tokens)
+                           **boundary_kwargs)
     ntokens = len(corpus.vocab)
     vocab = corpus.vocab
     args.n_token = ntokens
 
-    if args.mem_len == 0:
-        eval_mem_len = 0
-    else:
-        eval_mem_len = args.mem_len + args.tgt_len - args.eval_tgt_len
+    eval_tgt_lengths = args.eval_tgt_lengths
+    eval_total_lengths = args.eval_total_lengths
+
+    tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
+                                  device, args.ext_len, **boundary_kwargs)
+
+    va_iters, te_iters = [], []
+
+    for eval_tgt_len, eval_total_len in zip(eval_tgt_lengths, eval_total_lengths):
+        if args.mem_len == 0:
+            eval_ext_len = eval_total_len - eval_tgt_len
+        else:
+            assert args.ext_len == 0
+            eval_ext_len = 0
+            
+        va_iter = corpus.get_iterator('valid', args.eval_batch_size,
+                                      eval_tgt_len, device,
+                                      eval_ext_len, **boundary_kwargs)
+        te_iter = corpus.get_iterator('test', args.eval_batch_size,
+                                      eval_tgt_len, device,
+                                      eval_ext_len, **boundary_kwargs)
+        va_iters.append(va_iter)
+        te_iters.append(te_iter)
 
     print(args)
-    # There should be 5*1e6 tokens in test set in both enwik and text8
-    te_iter = corpus.get_iterator('test', args.eval_batch_size, args.eval_tgt_len, device=device,mem_len=eval_mem_len, ext_len=args.ext_len)
+
+    print(f'I focus on the test iter with args tgt_len = {eval_tgt_lengths[0]} ext_len = {eval_total_lengths[0] - eval_tgt_lengths[0]}')
+    te_iter = te_iters[0]
+
     world_size = utils.distributed.get_world_size()
-    print(f'We expect {te_iter.data.size(0)/args.eval_tgt_len} batches')
+    print(f'We expect {te_iter.n_batch} batches')
+
     data = [batch for batch in te_iter]
     batch = data[0]
     input_data, target, seq_len, boundaries = batch
@@ -153,14 +178,18 @@ def main():
     model.eval()
 
     with torch.no_grad():
-        target_test_len = 100
+        target_test_len = 500
         loss = model(input_data[:target_test_len, :1], target[:target_test_len, :1], None, boundaries[:target_test_len, :1])[0].cpu().detach()
         tab_losses = []
         for i in range(target_test_len):
             x = input_data[:i + 1, 0].cpu().numpy()
             sent = vocab.convert_to_sent(x)
-            x_boundaries = corpus.boundary_creator.get_boundaries(sent)
+            x_boundaries = corpus.boundary_creator.get_boundaries(sent, n_chunks=1)
             x_boundaries = x_boundaries.cuda()
+            j = i
+            while j>=0 and input_data[j, 0] != 0:
+                x_boundaries[j] = 0
+                j-=1
             elem_loss = model(input_data[:i + 1, :1], target[:i + 1, :1], None, x_boundaries.unsqueeze(1))
             tab_losses.append(elem_loss[0][-1, -1])
         pdb.set_trace()

@@ -158,7 +158,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
         chunk_len = line_len // n_chunks
         boundaries = torch.zeros(len(line), dtype=torch.bool)
 
-        print(f'We extract boundaries from input of length {line_len}, chunk_len is {chunk_len}')
+        #print(f'We extract boundaries from input of length {line_len}, chunk_len is {chunk_len}')
         for i in range(n_chunks):
             l = chunk_len * i
             if i + 1 == n_chunks:
