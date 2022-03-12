@@ -14,7 +14,7 @@ class BoundaryCreator():
         self.boundaries_type = boundaries_type
         if boundaries_type == 'ids':
             assert boundary_ids is not None and len(boundary_ids) > 0
-        
+
         if boundaries_type in ['ids']:
             self.extract_offline = False
         elif boundaries_type in ['normal']:
@@ -110,7 +110,7 @@ class BoundaryCreator():
             space_dist = [632308, 2401024, 3410951, 2733289, 2023812, 1447078, 1407995, \
                            1071319, 765731, 517567, 282529, 162820, 87729, 38597, 13429]
             space_dist = torch.tensor(space_dist)
-            
+
             group_sizes = torch.multinomial(input=space_dist.float(), num_samples=data.numel() ,replacement=True)
             group_sizes = group_sizes.reshape(data.size()).long().to(data.device)
             group_sizes += 2 # This is the shift of the distribution
@@ -149,7 +149,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
             Returns:
                 boundaries - (torch.BoolTensor) - [len(data)]
         """
-        
+
         # Here we store the ids under which the next groups start
         groups_beg_ids = []
 
@@ -182,7 +182,7 @@ def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
     elif boundaries_type in ['gpt2']:
         filename = os.path.join(datadir, f'cache_{boundaries_type}.pt')
     else:
-        assert boundaries_tokens > 0 
+        assert boundaries_tokens > 0
         filename = os.path.join(datadir, f'cache_{boundaries_type}_{boundaries_tokens}.pt')
     return filename
 
