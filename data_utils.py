@@ -12,18 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import glob
 import logging
 import os
-import re
-
-import numpy as np
 import torch
+import pdb
 
 import utils
-import pdb
 from utils.vocabulary import Vocab
-from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator, TokenizerBoundaryCreator
+from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator
 
 class LMOrderedIterator(object):
     def __init__(self, data, bsz, tgt_len, device='cpu', ext_len=None, boundary_creator=None):
@@ -36,7 +32,7 @@ class LMOrderedIterator(object):
 
         self.device = device
 
-        # Data is most likely a tuple, the data tensor and boundaries from boundaries
+        # Data is a tuple, the data tensor and boundaries from boundaries
         data, boundaries = data
 
         # Work out how cleanly we can divide the dataset into bsz parts.
@@ -61,8 +57,8 @@ class LMOrderedIterator(object):
             assert boundary_creator is not None
             self.boundaries = None
             if boundary_creator.boundaries_type in ['space_dist', 'normal']:
+                print('Special case, for random boundaries we want to sample them once')
                 self.boundaries = boundary_creator.get_boundaries(self.data).transpose(0, 1)
-                print(self.boundaries.size(), 'mem')
 
         self.boundary_creator = boundary_creator
 
@@ -90,13 +86,15 @@ class LMOrderedIterator(object):
         beg_idx = max(0, i - self.ext_len)
 
         data = self.data[beg_idx:end_idx].to(self.device, non_blocking=True)
+
         if self.boundaries is not None:
             boundaries = self.boundaries[beg_idx:end_idx].to(self.device, non_blocking=True)
         else:
             boundaries = self.boundary_creator.get_boundaries(data)
             if boundaries is not None:
                 boundaries = boundaries.transpose(0, 1)
-        target = self.data[i+1:i+1+seq_len].to(self.device, non_blocking=True)
+
+        target = self.data[i + 1:i + 1 + seq_len].to(self.device, non_blocking=True)
 
         return data, target, seq_len, boundaries
 
@@ -120,11 +118,11 @@ class Corpus(object):
         for split in ['train', 'valid', 'test']:
             dataset_path = os.path.join(path, f'{split}.txt')
             self.vocab.count_file(dataset_path)
-        
+
         self.vocab.build_vocab()
         boundary_ids = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
         kwargs['boundary_ids'] = boundary_ids
-        
+
         self.boundary_creator = get_boundary_creator(**kwargs)
         extract_boundaries = self.boundary_creator.extract_offline
 
@@ -132,14 +130,14 @@ class Corpus(object):
             dataset_path = os.path.join(path, f'{split}.txt')
             if self.dataset in ['enwik8']:
                 self.data[split] = self.vocab.encode_file(
-                        dataset_path, 
+                        dataset_path,
                         add_eos=True,
                         boundary_creator=self.boundary_creator,
                         extract_boundaries=extract_boundaries,
                 )
             elif self.dataset in ['text8']:
                 self.data[split] = self.vocab.encode_file(
-                        dataset_path, 
+                        dataset_path,
                         add_eos=False,
                         boundary_creator=self.boundary_creator,
                         extract_boundaries=extract_boundaries,
@@ -152,7 +150,7 @@ class Corpus(object):
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
-    filename = get_boundary_checkpoint_name(datadir, kwargs['boundaries_type'], kwargs['boundaries_tokens'])
+    filename = get_boundary_checkpoint_name(datadir, **kwargs)
     logging.info(f'Target corpus is under path {filename}')
 
     if os.path.exists(filename):

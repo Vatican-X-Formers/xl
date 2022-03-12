@@ -31,9 +31,11 @@ train: &train
    funnel_config: "[2, (8, 1), 2]"
    funnel_resample: custom
    activation_function: relu
-   boundaries_type: 'unigram'
-   boundaries_tokens: 5000
-   boundary_predictor: linear
+   boundaries_type: 'tokenizer'
+   tokenizer_type: 'unigram'
+   tokenizer_vocab_size: 5000
+   tokenizer_dropout: 0.0
+   tokenizer_algorithm: 'approach1'
 
 default:
    train:

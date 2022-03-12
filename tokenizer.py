@@ -66,8 +66,9 @@ class TokeniserTrainer():
         self.corpus_filepath = corpus_filepath
         self.save_dir = save_dir
         self.chunks = chunks
-        self.train_data = load_corpus_and_split(corpus_filepath, chunks)
-        assert len(self.train_data) == chunks
+        if corpus_filepath != '':
+            self.train_data = load_corpus_and_split(corpus_filepath, chunks)
+            assert len(self.train_data) == chunks
 
     def get_tokenizer_and_trainer(self, tokenizer_type, vocab_size, dropout):
         if tokenizer_type == 'bpe':

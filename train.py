@@ -31,10 +31,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
-try:
-    from apex import amp
-except ModuleNotFoundError:
-    warnings.warn('APEX AMP is unavailable')
 
 from torch.nn.parallel import DistributedDataParallel
 
@@ -44,7 +40,6 @@ from data_utils import get_lm_corpus
 from hourglass import MemTransformerLM
 from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
-from utils.exp_utils import benchmark
 from utils.exp_utils import create_exp_dir
 from utils.exp_utils import l2_promote
 from utils.exp_utils import log_env_info
@@ -54,6 +49,7 @@ import pdb
 
 run = None
 np.set_printoptions(suppress=True)
+
 
 def parse_args():
     parent_parser = argparse.ArgumentParser(
@@ -187,7 +183,11 @@ def parse_args():
     boundaries.add_argument('--std_normal', type=float, default=1.0)
     boundaries.add_argument('--boundary_ids', type=str, default='[]')
     boundaries.add_argument('--boundaries_type', type=str, default='vanilla')
-    boundaries.add_argument('--boundaries_tokens', type=int, default=0)
+    boundaries.add_argument('--tokenizer_type', type=str)
+    boundaries.add_argument('--tokenizer_vocab_size', type=int)
+    boundaries.add_argument('--tokenizer_dropout', type=float)
+    boundaries.add_argument('--tokenizer_save_dir', default='./tokenizer_data/')
+    boundaries.add_argument('--tokenizer_algorithm', default=None)
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -264,7 +264,7 @@ def parse_args():
     args.tied = not args.not_tied
 
     assert len(args.eval_tgt_lengths) == len(args.eval_total_lengths)
-    
+
     if args.ckpt_path == "":
         args.ckpt_path = config_args.config_file
 
@@ -289,7 +289,7 @@ def save_checkpoint(args, model, model_config, optimizer, scheduler, scaler,
         if args.amp == 'pytorch':
             amp_state = scaler.state_dict()
         elif args.amp == 'apex':
-            amp_state = amp.state_dict()
+            raise NotImplementedError
     else:
         amp_state = None
 
@@ -412,7 +412,7 @@ def update_dropatt(m, args):
         m.dropatt.p = args.dropatt
 
 
-def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100, dataset='text8'):
+def sample_generation(vocab, model, args, temp=1.0, start_seq=[0], steps=100, dataset='text8'):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
@@ -438,7 +438,7 @@ def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
                 logits = model(data, target, mems)
-                probs = F.softmax(logits[-1, 0, :], dim = 0)
+                probs = F.softmax(logits[-1, 0, :], dim=0)
                 next_index = probs.cpu().multinomial(num_samples=1, replacement=True).item()
                 generated_sequence.append(next_index)
 
@@ -453,7 +453,7 @@ def sample_generation(vocab, model, args, temp = 1.0, start_seq = [0], steps=100
     if dataset == 'text8':
         generated_sample = generated_sample.replace(' ', '').replace('_', ' ')
     elif dataset == 'enwik8':
-        raise NotImplemented
+        raise NotImplementedError
 
     return generated_sample
 
@@ -544,7 +544,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
     cpu = torch.device('cpu')
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
-    
+
     if boundaries_chunks is not None:
         boundaries_i = boundaries_chunks[i].contiguous()
     else:
@@ -566,8 +566,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
         if args.amp == 'pytorch':
             scaler.scale(total_loss).backward()
         elif args.amp == 'apex':
-            with amp.scale_loss(total_loss, optimizer, delay_unscale=delay_unscale) as scaled_loss:
-                scaled_loss.backward()
+            raise NotImplementedError
     else:
         total_loss.backward()
 
@@ -592,7 +591,7 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
 
     times = defaultdict(list)
 
-    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=last_batch+1):
+    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=last_batch + 1):
         t0 = time.time()
         if batch > 1:
             times['data_loader'].append(t3-t0)
@@ -625,15 +624,15 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
 
             train_loss += train_loss_chunk
             t2 = time.time()
-            times['forward'].append(t2-t1)
+            times['forward'].append(t2 - t1)
 
         # Custom stats added by me
-        for k,v in stats.items():
+        for k, v in stats.items():
             stats_agg[k].append(v)
 
         stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
         stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
-        
+
         # if run and train_step % args.text_generation_interval == 0:
             # generated_sample = sample_generation(vocab, model, args)
             # run['gen/text'].log(generated_sample)
@@ -722,7 +721,7 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
         do_periodic_eval = train_step % args.eval_interval == 0
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
-        
+
         if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
             eval_start_time = time.time()
 
@@ -866,9 +865,13 @@ def main():
         'std_normal':args.std_normal,
         'boundary_ids':args.boundary_ids,
         'boundaries_type':args.boundaries_type,
-        'boundaries_tokens':args.boundaries_tokens,
+        'tokenizer_type':args.tokenizer_type,
+        'tokenizer_vocab_size':args.tokenizer_vocab_size,
+        'tokenizer_dropout':args.tokenizer_dropout,
+        'tokenizer_save_dir':args.tokenizer_save_dir,
+        'tokenizer_algorithm':args.tokenizer_algorithm,
     }
-    corpus = get_lm_corpus(args.data, 
+    corpus = get_lm_corpus(args.data,
                            args.dataset,
                            **boundary_kwargs)
     ntokens = len(corpus.vocab)

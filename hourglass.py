@@ -73,7 +73,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
                 tgt_len=None, ext_len=None, mem_len=None, pre_lnorm=False,
                 activation_function='None'):
         super(RelPartialLearnableMultiHeadAttn, self).__init__()
-    
+
         del activation_function
 
         self.n_head = n_head
@@ -95,7 +95,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.scale = 1 / (d_head ** 0.5)
 
         self.pre_lnorm = pre_lnorm
-    
+
     def _rel_shift(self, x):
         zero_pad = torch.zeros((x.size(0), x.size(1), x.size(2), 1),
                                device=x.device, dtype=x.dtype)
@@ -213,7 +213,7 @@ class Upsampler(nn.Module):
         self.upsample_factor = upsample_factor
         self.mode = mode
         self.ln = nn.LayerNorm(embedding_dim)
-    
+
     def forward(self, x, residual, upsampling_mask = None):
         if self.mode == 'naive':
             x = x.repeat_interleave(self.upsample_factor, dim=0)
@@ -241,19 +241,19 @@ class Downsampler(nn.Module):
         self.downsample_factor = downsample_factor
         if mode == 'naive':
             self.downsample_layer = nn.AvgPool1d(
-                kernel_size = downsample_factor, 
+                kernel_size = downsample_factor,
                 stride = downsample_factor
             )
         elif mode == 'custom':
             assert self.downsample_factor == 1, 'Just a special requirement of using custom mode'
 
-        if mode in ['naive']: 
+        if mode in ['naive']:
             self.leftmost_group = nn.Parameter(
                 torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
             )
         else:
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
-    
+
     def forward(self, x, mems = None, downsampling_mask = None):
         # Input is of shape T x B x C
         sf = self.downsample_factor
@@ -287,7 +287,7 @@ class Downsampler(nn.Module):
                 [self.leftmost_group.repeat(1, x.size(1), 1), x], dim=0
             )
 
-        return x 
+        return x
 
 class BoundaryPredictor(nn.Module):
     def __init__(self, mode, d_model, threshold = 0.5):
@@ -305,7 +305,7 @@ class BoundaryPredictor(nn.Module):
         if self.mode == 'linear':
             hidden = hidden[:-1]
             boundaries_gt = boundaries_gt[1:].float()
-            
+
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = self.loss(preds, boundaries_gt)
 
@@ -337,7 +337,7 @@ class MemTransformerLM(nn.Module):
                  cutoffs=[], adapt_inp=False,
                  same_length=False, attn_type=0, clamp_len=-1,
                  sample_softmax=-1,
-                 funnel_config="[3, (1, 2) ,3]", 
+                 funnel_config="[3, (1, 2) ,3]",
                  funnel_resample='naive',
                  activation_function='relu',
                  gather_stats=[],
@@ -353,13 +353,13 @@ class MemTransformerLM(nn.Module):
         self.d_head = d_head
 
         self.word_emb = nn.Embedding(n_token, d_model)
-       
+
         self.drop = nn.Dropout(dropout)
 
         # Relative attention specific parameters
         self.pos_emb = PositionalEmbedding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
-        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_()) 
+        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head).zero_())
 
         self.tie_weight = tie_weight
         self.tie_projs = tie_projs
@@ -370,7 +370,7 @@ class MemTransformerLM(nn.Module):
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
-        
+
         self.pre_lnorm = pre_lnorm
         if self.pre_lnorm:
             self.layer_norms = nn.ModuleList([
@@ -426,7 +426,7 @@ class MemTransformerLM(nn.Module):
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
-        self.clamp_len = clamp_len       
+        self.clamp_len = clamp_len
         # Remember that this stats should be elementwise and not batch_agg
         # These stats, e.g. shortened_length, depend on the batch size
         # As we take maximum shortened_length from the batch - take care
@@ -527,15 +527,15 @@ class MemTransformerLM(nn.Module):
             # Mems are none when mem_len is set to 0, we want to keep this possibility
             mems_i = None if mems is None else mems[i]
             core_out = layer(
-                core_out, pos_emb, self.r_w_bias, self.r_r_bias, 
+                core_out, pos_emb, self.r_w_bias, self.r_r_bias,
                 dec_attn_mask=dec_attn_mask, mems=mems_i
             )
 
         new_mems = self._update_mems(hids, mems, qlen, mlen, mem_len)
 
         return core_out, new_mems
-    
-    def create_masks(self, boundaries): 
+
+    def create_masks(self, boundaries):
         # This is due to specific implementation we use to create pooling masks
         # later in the Transformer model - True assumes that we start a new group
         # and we always want to start a new group at the first element, not to skip anything
@@ -553,9 +553,9 @@ class MemTransformerLM(nn.Module):
         final = torch.zeros_like(foo)
         final[foo == 0] = 1
         size_of_groups = final.sum(1, keepdim=True)
-        downsample_mask= final / (size_of_groups + 1e-9)
+        downsample_mask = final / (size_of_groups + 1e-9)
 
-        return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()   
+        return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()
 
 
     def forward(self, data, target, mems, boundaries=None, special=False):
@@ -565,7 +565,7 @@ class MemTransformerLM(nn.Module):
         assert data.size(0) >= data.size(1)
         # Data and target are of size T x B
         if mems is None:
-            mems = self.init_mems() 
+            mems = self.init_mems()
 
         # Data loader serves most batches of length args.tgt_len but
         # the last batch could be leftover and could be shorter
@@ -593,6 +593,7 @@ class MemTransformerLM(nn.Module):
         mems_index = 0 # It points to current/next stack of Transformer layers for which we need mems
         new_mems = [] # Here we keep outputs and mems for the next steps, we also take residual from here
         loss_boundaries = 0 # default init beacause we later return it
+        residual = None
 
         for i in range(len(self.layers)):
             layers = self.layers[i]
@@ -615,7 +616,7 @@ class MemTransformerLM(nn.Module):
                         stats['loss_boundaries'] = loss_boundaries.item()
                         stats['precision'] = precision
                         stats['recall'] = recall
-                
+
                 if special:
                     return loss_boundaries, stats
 
@@ -624,8 +625,8 @@ class MemTransformerLM(nn.Module):
                 current_sf *= layers.downsample_factor
             else:
                 hidden, new_mem = self._forward(
-                    hidden, 
-                    mems=mems[mems_index] if mems is not None else None, 
+                    hidden,
+                    mems=mems[mems_index] if mems is not None else None,
                     layers=layers,
                     mem_len=self.mem_len // current_sf,
                     clamp_len=self.clamp_len // current_sf,
@@ -638,9 +639,9 @@ class MemTransformerLM(nn.Module):
         # Loss calculation, Negative log likelihood
         # What we do here is we calculate -log(softmax) over vocab
         # Then take the value corresponding only to our target
- 
+
         hidden = hidden[-tgt_len:]
-        if getattr(self, 'final_cast', None) is not None: 
+        if getattr(self, 'final_cast', None) is not None:
             logit = self.final_cast(hidden)
         else:
             logit = self.crit._compute_logit(hidden, self.crit.out_layers_weights[0], self.crit.out_layers_biases[0], self.crit.get_out_proj(0))
@@ -653,18 +654,6 @@ class MemTransformerLM(nn.Module):
 
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
-
-#             if not self.training and loss.size(0) == downsampling_mask.size(1):
-                # assert loss.size(0) == downsampling_mask.size(1), 'we dont use it for eval with context, it gets too messy'
-                # number_of_groups = torch.bincount(size_of_groups, minlength=150)
-
-                # with torch.no_grad():
-                    # loss_per_group_len = torch.einsum('lb, blt -> bt', loss.detach().clone(), downsampling_mask).detach().clone()
-
-                    # sum_of_losses_per_group_size = torch.zeros_like(number_of_groups).float()
-                    # sum_of_losses_per_group_size.index_add_(0, size_of_groups, loss_per_group_len.flatten())
-                    # stats['sum_of_losses_per_group_size'] = sum_of_losses_per_group_size
-                    # stats['number_of_groups'] = number_of_groups
 
             return loss, new_mems, stats, loss_boundaries
         else:

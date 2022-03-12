@@ -5,12 +5,11 @@ from tokenizers import Tokenizer
 
 class BoundaryCreator():
     def __init__(
-        self, boundaries_type, boundaries_tokens=None, boundary_ids=None,
+        self, boundaries_type, boundary_ids=None,
         move_prob=0.0, deletion_prob=0.0, insert_prob=0.0,
         clamp_group_sizes = False, min_group_length = 0, max_group_length = 1000*1000, 
         mean_normal = 5.5, std_normal = 1,
     ):
-        del boundaries_tokens
         self.boundaries_type = boundaries_type
         if boundaries_type == 'ids':
             assert boundary_ids is not None and len(boundary_ids) > 0
@@ -124,19 +123,20 @@ class BoundaryCreator():
 
 
 class TokenizerBoundaryCreator(BoundaryCreator):
-    def __init__(self, boundaries_type, boundaries_tokens, **kwargs):
-        super().__init__(boundaries_type, boundaries_tokens, **kwargs)
+    def __init__(self, boundaries_type, tokenizer_type, tokenizer_vocab_size, tokenizer_dropout,
+                 tokenizer_save_dir, tokenizer_algorithm, **kwargs):
+        super().__init__(boundaries_type, **kwargs)
 
         self.extract_offline = True
+        from tokenizer import AutoregressiveTokeniser
+        self.tokenizer = AutoregressiveTokeniser(corpus_filepath='',
+                                                save_dir=tokenizer_save_dir,
+                                                tokenizer_type=tokenizer_type,
+                                                dropout=tokenizer_dropout,
+                                                algorithm=tokenizer_algorithm,
+                                                vocab_size=tokenizer_vocab_size)
 
-        if boundaries_type == 'gpt2':
-            self.tokenizer = Tokenizer.from_pretrained("gpt2")
-        elif boundaries_type in ['bpe', 'unigram', 'wordpiece', 'bpe_drop0.1', 'bpe_drop0.2']:
-            self.tokenizer = Tokenizer.from_file(f'data/tokenizer/{boundaries_type}-{boundaries_tokens}.json')
-        else:
-            raise NotImplementedError
-
-    def get_boundaries(self, data, n_chunks = 100):
+    def get_boundaries(self, data):
         """
             Function that generates boundaries for given tensor of data
 
@@ -149,48 +149,28 @@ class TokenizerBoundaryCreator(BoundaryCreator):
             Returns:
                 boundaries - (torch.BoolTensor) - [len(data)]
         """
-
-        # Here we store the ids under which the next groups start
-        groups_beg_ids = []
-
-        line = data.replace(' ', '').replace('_', ' ')
-        line_len = len(line)
-        chunk_len = line_len // n_chunks
-        boundaries = torch.zeros(len(line), dtype=torch.bool)
-
-        #print(f'We extract boundaries from input of length {line_len}, chunk_len is {chunk_len}')
-        for i in range(n_chunks):
-            l = chunk_len * i
-            if i + 1 == n_chunks:
-                # If it's last chunk, that we set right boundary to the last element to capture all
-                r = line_len
-            else:
-                r = chunk_len * (i + 1)
-
-            groups_beg_ids += [a + l for a, _ in self.tokenizer.encode(line[l:r]).offsets]
-            #print(f'We finished {i}-th chunk out of {n_chunks}. We encoded segment from {l} to {r}')
-
-        assert r == line_len
-        boundaries[groups_beg_ids] = True
-
-        return boundaries
+        print('this shit started')
+        return self.tokenizer.get_boundaries(data)
 
 
-def get_boundary_checkpoint_name(datadir, boundaries_type, boundaries_tokens):
+def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
     if boundaries_type in ['noboundaries', 'ids', 'constant', 'normal', 'space_dist']:
         filename = os.path.join(datadir, 'cache.pt')
-    elif boundaries_type in ['gpt2']:
-        filename = os.path.join(datadir, f'cache_{boundaries_type}.pt')
-    else:
-        assert boundaries_tokens > 0
-        filename = os.path.join(datadir, f'cache_{boundaries_type}_{boundaries_tokens}.pt')
+    elif boundaries_type == 'tokenizer':
+        if kwargs['tokenizer_dropout'] == 0:
+            filename = os.path.join(datadir,
+                                    f'cache_{kwargs["tokenizer_type"]}_{kwargs["tokenizer_vocab_size"]}.pt')
+        else:
+            filename = os.path.join(datadir,
+                                    f'cache_{kwargs["tokenizer_type"]}_drop{kwargs["tokenizer_dropout"]}_{kwargs["tokenizer_vocab_size"]}.pt')
+
     return filename
 
 
 def get_boundary_creator(boundaries_type, **kwargs):
     if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
         return BoundaryCreator(boundaries_type, **kwargs)
-    else:
+    elif boundaries_type == 'tokenizer':
         return TokenizerBoundaryCreator(boundaries_type, **kwargs)
 
 
