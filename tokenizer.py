@@ -20,12 +20,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     general = parser.add_argument_group('general setup')
-    general.add_argument('--corpus_dir',
-                         default='/home/pnawrot/piotrek/datasets/text8', type=str)
-    general.add_argument('--corpus_split', default='text8', type=str)
-    general.add_argument('--save_dir',
-                         default='/home/pnawrot/piotrek/datasets/tokenizer/', type=str)
-    general.add_argument('--tokenizer_type', default='unigram', type=str)
+    general.add_argument('--corpus_dir', default='/home/pnawrot/piotrek/datasets/text8')
+    general.add_argument('--corpus_split', default='text8')
+    general.add_argument('--save_dir', default='./tokenizer_data/')
+    general.add_argument('--tokenizer_type', default='unigram')
     general.add_argument('--vocab_size', default=5000, type=int)
     general.add_argument('--dropout', default=0.0, type=float)
     args, _ = parser.parse_known_args()
