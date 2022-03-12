@@ -107,7 +107,7 @@ class TokenizersData():
     def __init__(self, tokenizer, corpus_filepath, save_path, chunks=1000):
         self.tokenizer = tokenizer
         self.corpus_filepath = corpus_filepath
-        self.save_dir = save_path
+        self.save_path = save_path
         self.chunks = chunks
         self.train_data = load_corpus_and_split(corpus_filepath, chunks)
 
@@ -135,6 +135,7 @@ class TokenizersData():
         return freqs
 
     def extract_data(self):
+        print(f'Extracting data for {self.save_path}')
         global_freq = defaultdict(int)
 
         with Pool(multiprocessing.cpu_count()) as pool:
@@ -150,9 +151,6 @@ class TokenizersData():
 
         # Special key
         global_freq['+ALL+'] = total_tokens
-
-        for k, v in global_freq.items():
-            global_freq['log+' + k] = np.log(v) - np.log(total_tokens)
 
         with open(self.save_path, 'wb') as file:
             pickle.dump(global_freq, file)
@@ -186,8 +184,10 @@ class AutoregressiveTokeniser():
                 tokenizer = trainer.train(tokenizer_type, vocab_size, dropout)
 
             print('Extracting the necessary data from trained tokeniser')
-            tokenizer_data_extractor = TokenizersData(tokenizer, corpus_filepath, save_dir)
-            tokenizer_data = tokenizer_data_extractor.extract()
+            tokenizer_data_extractor = TokenizersData(tokenizer,
+                                                      corpus_filepath,
+                                                      tokenizer_data_path)
+            tokenizer_data = tokenizer_data_extractor.extract_data()
 
         self.tokenizer_data = tokenizer_data
 
