@@ -1,7 +1,7 @@
 for TOKENIZER in unigram wordpiece bpe do
 		for VOCAB_SIZE in 5000 50000 do
 				echo "Running $TOKENIZER $VOCAB_SIZE"
-				python train_tokenizer.py \
+				python tokenizer.py \
 						--corpus_dir /home/pnawrot/piotrek/datasets/text8 \
 						--corpus_split text8 \
 						--save_dir /home/pnawrot/piotrek/datasets/tokenizer/ \
@@ -12,7 +12,7 @@ for TOKENIZER in unigram wordpiece bpe do
 done
 
 echo "Running dropout training"
-python train_tokenizer.py \
+python tokenizer.py \
 		--corpus_dir /home/pnawrot/piotrek/datasets/text8 \
 		--corpus_split text8 \
 		--save_dir /home/pnawrot/piotrek/datasets/tokenizer/ \
