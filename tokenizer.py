@@ -164,7 +164,6 @@ class AutoregressiveTokeniser():
             else:
                 print('Training a tokeniser from scratch')
                 tokenizer = trainer.train(tokenizer_type, vocab_size, dropout)
-                sys.exit()
 
             print('Extracting the necessary data from trained tokeniser')
             tokenizer_data_extractor = TokenizersData(tokenizer, corpus_filepath, save_dir)
@@ -172,60 +171,48 @@ class AutoregressiveTokeniser():
 
         self.tokenizer_data = tokenizer_data
 
-    def is_boundary(self, word):
+    def approach1(self, word):
         return self.freq_total[word + '*'] == 0
 
-    def prob_is_boundary(self, word):
-        if self.is_boundary(word):
+    def approach2(self, word):
+        if self.approach1(word):
             return True
         return self.freq_total[word + '*'] * self.total_tokens < self.freq_total[word[:-1]] * self.freq_total[word[-1] + '*']
 
-    def dp_boundaries(self, word):
-        word = '▁' + word
-        word_len = len(word)
+    def get_boundary_predictor(self, algorithm):
+        pass
 
-        dp = np.zeros(word_len + 1) + (-1e9)
-        dp[0] = 0
-        dp_argmaxes = np.zeros(word_len + 1, dtype=np.int_)
+    def get_boundaries_for_word(self, word, algorithm):
+        boundary_predictor = self.get_boundary_predictor(algorithm)
 
-        for i in range(1, word_len + 1):
-            for j in range(i):
-                subword = word[j:i]
-                if subword in self.log_probs and dp[j] + self.log_probs[subword] > dp[i]:
-                    dp[i] = dp[j] + self.log_probs[subword]
-                    dp_argmaxes[i] = j
-
-        argmax = -1
-        top_probability = -1e9
-
-        boundaries = torch.zeros(word_len).bool().cuda()
-
-        for j in range(word_len):
-            extended_subword = word[j:] + '*'
-
-            if extended_subword in self.log_probs and dp[j] + self.log_probs[extended_subword] > top_probability:
-                top_probability = dp[j] + self.log_probs[extended_subword]
-                argmax = j
-
-        assert argmax != -1
-
-        while argmax > 0:
-            boundaries[argmax] = 1
-            argmax = dp_argmaxes[argmax]
-
-        return boundaries[1:].unsqueeze(1)
-
-    def get_boundaries(self, word):
         acc = '▁'
         boundaries = torch.zeros(len(word)).bool().cuda()
 
         for i in range(len(word)):
             acc += word[i]
-            if self.prob_is_boundary(acc):
+            if boundary_predictor(acc):
                 boundaries[i] = True
                 acc = acc[-1]
 
         return boundaries.unsqueeze(1)
+
+    def get_boundaries(self, text, algorithm):
+        current_len = 0
+        text_len = len(text)
+        boundaries = torch.zeros(text_len).bool()
+
+        for idx, word in enumerate(text.split(' ')):
+            if len(word) > 0:
+                boundaries[current_len:current_len + len(word)] = \
+                    self.get_boundaries_for_word(word, algorithm)
+                current_len += len(word)
+
+            if not (idx + 1 == len(text.split(' '))):
+                # space handling
+                boundaries[current_len] = 1
+                current_len += 1
+
+        return boundaries
 
 
 if __name__ == "__main__":
