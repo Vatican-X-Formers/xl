@@ -26,6 +26,7 @@ def parse_args():
     general.add_argument('--tokenizer_type', default='unigram')
     general.add_argument('--vocab_size', default=5000, type=int)
     general.add_argument('--dropout', default=0.0, type=float)
+    general.add_argument('--algorithm', default=None)
     args, _ = parser.parse_known_args()
 
     args.corpus_filepath = os.path.join(args.corpus_dir, args.corpus_split)
@@ -160,9 +161,11 @@ class TokenizersData():
 
 
 class AutoregressiveTokeniser():
-    def __init__(self, corpus_filepath, save_dir, tokenizer_type, vocab_size, dropout):
+    def __init__(self, corpus_filepath, save_dir, tokenizer_type, vocab_size,
+                 dropout, algorithm):
         self.corpus_filepath = corpus_filepath
         self.save_dir = save_dir
+        self.algorithm = algorithm
 
         trainer = TokeniserTrainer(self.corpus_filepath, self.save_dir)
         tokenizer_filename = trainer.get_tokenizer_filename(tokenizer_type,
@@ -190,13 +193,14 @@ class AutoregressiveTokeniser():
             tokenizer_data = tokenizer_data_extractor.extract_data()
 
         self.tokenizer_data = tokenizer_data
+        self.raw_tokenizer = Tokenizer.from_file(tokenizer_path)
 
     def approach1(self, current_subword, new_char):
         """
             We start a new group if there hasn't been a token in training
             corpora that starts with (current_subword + new_char)
         """
-        if self.freq_total[current_subword + new_char + '*'] == 0:
+        if self.tokenizer_data[current_subword + new_char + '*'] == 0:
             return True
         else:
             return False
@@ -210,8 +214,8 @@ class AutoregressiveTokeniser():
             segmentation is here calculated as probabilities of tokens for
             unigram model trained on tokenized training corpora
         """
-        return self.freq_total[current_subword + new_char + '*'] * self.total_tokens < \
-                self.freq_total[current_subword] * self.freq_total[new_char + '*']
+        return self.tokenizer_data[current_subword + new_char + '*'] * self.tokenizer_data['+ALL+'] < \
+                self.tokenizer_data[current_subword] * self.tokenizer_data[new_char + '*']
 
     def approach3(self, current_subword, new_char):
         """
@@ -224,7 +228,11 @@ class AutoregressiveTokeniser():
                 negatives - # of tokens current_subword which are before the
                     token starting with the new_char
         """
-        pass
+        if self.tokenizer_data[current_subword + '+' + new_char] > \
+                self.tokenizer_data[current_subword + new_char + '*']:
+            return True
+        else:
+            return False
 
     def approach4(self, current_subword, new_char):
         """
@@ -233,7 +241,14 @@ class AutoregressiveTokeniser():
            multiplied by the probability of new_char* is greater than
            probability of token (current_subword+new_char*)
         """
-        pass
+        positives = self.tokenizer_data[current_subword + new_char + '*']
+        negatives = self.tokenizer_data[current_subword + '+' + new_char]
+        prob_of_finish = negatives / (positives + negatives)
+        if prob_of_finish * self.tokenizer_data[new_char + '*'] > \
+                self.tokenizer_data[current_subword + new_char + '*']:
+            return True
+        else:
+            return False
 
     def get_boundary_predictor(self, algorithm):
         """
@@ -250,17 +265,22 @@ class AutoregressiveTokeniser():
         boundary_predictor = self.get_boundary_predictor(algorithm)
 
         acc = '▁'
-        boundaries = torch.zeros(len(word)).bool().cuda()
+        boundaries = torch.zeros(len(word)).bool()
 
         for i in range(len(word)):
-            acc += word[i]
-            if boundary_predictor(acc):
+            if boundary_predictor(acc, word[i]):
                 boundaries[i] = True
-                acc = acc[-1]
+                acc = word[i]
+            else:
+                acc += word[i]
 
-        return boundaries.unsqueeze(1)
+        return boundaries
 
-    def get_boundaries(self, text, algorithm):
+    def get_boundaries(self, text, algorithm=None):
+        if algorithm is None:
+            assert getattr(self, 'algorithm', None) is not None
+            algorithm = self.algorithm
+
         current_len = 0
         text_len = len(text)
         boundaries = torch.zeros(text_len).bool()
@@ -278,13 +298,10 @@ class AutoregressiveTokeniser():
 
         return boundaries
 
-    def get_boundaries_multiprocessing(self, text, algorithm):
-        pass
-
 
 if __name__ == "__main__":
     args = parse_args()
-    tokeniser = AutoregressiveTokeniser(args.corpus_filepath, args.save_dir,
+    dataset = load_corpus_and_split(args.corpus_filepath, 1)[0][:500]
+    auto_tokenizer = AutoregressiveTokeniser(args.corpus_filepath, args.save_dir,
                                         args.tokenizer_type, args.vocab_size,
-                                        args.dropout)
-    pdb.set_trace()
+                                        args.dropout, args.algorithm)
