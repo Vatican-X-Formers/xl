@@ -35,21 +35,38 @@ def parse_args():
     return args
 
 
+def load_corpus_and_split(corpus_filepath, chunks):
+    lines = []
+    with open(corpus_filepath) as file:
+        for i, line in enumerate(file):
+            lines.append(line.strip())
+
+    assert len(lines) == 1
+    corpus = lines[0]
+    corpus_len = len(corpus)
+    chunk_len = (corpus_len + chunks - 1) // chunks
+    split_indexes = [0]
+
+    # split on spaces
+    for i in range(chunk_len, corpus_len, chunk_len):
+        for j in range(200):
+            if corpus[i + j] == ' ':
+                split_indexes.append(i + j)
+                break
+
+    split_indexes.append(corpus_len)
+
+    return [corpus[left:right] for left, right in zip(split_indexes[:-1],
+                                                      split_indexes[1:])]
+
+
 class TokeniserTrainer():
     def __init__(self, corpus_filepath, save_dir, chunks=10000):
         self.corpus_filepath = corpus_filepath
         self.save_dir = save_dir
-
-        lines = []
-        with open(self.corpus_filepath) as file:
-            for i, line in enumerate(file):
-                lines.append(line.strip())
-
-        assert len(lines) == 1
-        corpus = lines[0]
-        corpus_len = len(corpus)
-        chunk_len = (corpus_len + chunks - 1) // chunks
-        self.train_data = [corpus[left:left + chunk_len] for left in range(0, corpus_len, chunk_len)]
+        self.chunks = chunks
+        self.train_data = load_corpus_and_split(corpus_filepath, chunks)
+        assert len(self.train_data) == chunks
 
     def get_tokenizer_and_trainer(self, tokenizer_type, vocab_size, dropout):
         if tokenizer_type == 'bpe':
@@ -87,22 +104,12 @@ class TokeniserTrainer():
 
 
 class TokenizersData():
-    def __init__(self, tokenizer, corpus_filepath, save_dir, chunks=1000):
+    def __init__(self, tokenizer, corpus_filepath, save_path, chunks=1000):
         self.tokenizer = tokenizer
         self.corpus_filepath = corpus_filepath
-        self.save_dir = save_dir
+        self.save_dir = save_path
         self.chunks = chunks
-        with open(self.corpus_filepath) as file:
-            train_data = []
-            for i, line in enumerate(file):
-                train_data.append(line.strip())
-            assert len(train_data) == 1
-            self.corpus = train_data[0]
-        self.corpus_len = len(self.corpus)
-        self.chunk_len = (self.corpus_len + self.chunks - 1) // self.chunks
-        self.jobs = [(left, left + self.chunk_len) for left in range(0,
-                                                                     self.corpus_len,
-                                                                     self.chunk_len)]
+        self.train_data = load_corpus_and_split(corpus_filepath, chunks)
 
     def export_frequencies(self, corpus):
         words = corpus.strip().split(' ')
@@ -112,10 +119,18 @@ class TokenizersData():
 
         for word, occurences in words_counted.items():
             tokens = self.tokenizer.encode(word).tokens
-            for token in tokens:
+            for token_id, token in enumerate(tokens):
                 freqs[token] += occurences
+
                 for i in range(1, len(token) + 1):
                     freqs[token[:i] + '*'] += occurences
+
+                not_last = token_id != (len(tokens) - 1)
+                if not_last:
+                    # For approach 3 and 4
+                    # We save the number of token's occurences but dependent on
+                    # the starting character of the next token
+                    freqs[token + '+' + tokens[token_id + 1][0]] += occurences
 
         return freqs
 
@@ -124,7 +139,7 @@ class TokenizersData():
 
         with Pool(multiprocessing.cpu_count()) as pool:
             for x in tqdm.tqdm(pool.imap_unordered(self.export_frequencies,
-                                                   self.jobs)):
+                                                   self.train_data)):
                 for k, v in x.items():
                     global_freq[k] += v
 
@@ -133,12 +148,17 @@ class TokenizersData():
             if not k.endswith('*'):
                 total_tokens += v
 
-        self.log_probs = {}
-        for k, v in global_freq.items():
-            self.log_probs[k] = np.log(v) - np.log(self.total_tokens)
+        # Special key
+        global_freq['+ALL+'] = total_tokens
 
-        with open(f'inference_{sys.argv[1].replace(".json", "")}.pkl', 'wb') as file:
+        for k, v in global_freq.items():
+            global_freq['log+' + k] = np.log(v) - np.log(total_tokens)
+
+        with open(self.save_path, 'wb') as file:
             pickle.dump(global_freq, file)
+
+        os.chmod(self.save_path, 0o777)
+        return global_freq
 
 
 class AutoregressiveTokeniser():
@@ -171,16 +191,60 @@ class AutoregressiveTokeniser():
 
         self.tokenizer_data = tokenizer_data
 
-    def approach1(self, word):
-        return self.freq_total[word + '*'] == 0
-
-    def approach2(self, word):
-        if self.approach1(word):
+    def approach1(self, current_subword, new_char):
+        """
+            We start a new group if there hasn't been a token in training
+            corpora that starts with (current_subword + new_char)
+        """
+        if self.freq_total[current_subword + new_char + '*'] == 0:
             return True
-        return self.freq_total[word + '*'] * self.total_tokens < self.freq_total[word[:-1]] * self.freq_total[word[-1] + '*']
+        else:
+            return False
+
+    def approach2(self, current_subword, new_char):
+        """
+            We start a new group if:
+                p(current_subword + new_char + *) < p(current_subword) * p(new_char + *)
+            That is, we compare probabilities of segmentation in which we
+            either put a boundary or don't put a boundary. Probability of
+            segmentation is here calculated as probabilities of tokens for
+            unigram model trained on tokenized training corpora
+        """
+        return self.freq_total[current_subword + new_char + '*'] * self.total_tokens < \
+                self.freq_total[current_subword] * self.freq_total[new_char + '*']
+
+    def approach3(self, current_subword, new_char):
+        """
+            Very similar to approach2, but we calculate the probabilities
+            differently. Specifically here we ask explicitly about probability
+            of starting a new group given a current_subword and a new_char.
+            We put a boundary if negatives > positives
+                positives - # of tokens that start with
+                    current_subword+new_char
+                negatives - # of tokens current_subword which are before the
+                    token starting with the new_char
+        """
+        pass
+
+    def approach4(self, current_subword, new_char):
+        """
+           Combination of approach 2 and 3. We put a boundary if the
+           probability from approach 3 that we finish current_subword
+           multiplied by the probability of new_char* is greater than
+           probability of token (current_subword+new_char*)
+        """
+        pass
 
     def get_boundary_predictor(self, algorithm):
-        pass
+        """
+            All the approaches here are conditioned only on the
+            single word, they don't use any larger context. For longer context
+            there is the approach with additional module within the main
+            network and the linear layer/transformer block.
+            Here we could also add an approach that make use of tokenisation up
+            until the current character, and not only the lastest subword.
+        """
+        return getattr(self, algorithm)
 
     def get_boundaries_for_word(self, word, algorithm):
         boundary_predictor = self.get_boundary_predictor(algorithm)
@@ -213,6 +277,9 @@ class AutoregressiveTokeniser():
                 current_len += 1
 
         return boundaries
+
+    def get_boundaries_multiprocessing(self, text, algorithm):
+        pass
 
 
 if __name__ == "__main__":
