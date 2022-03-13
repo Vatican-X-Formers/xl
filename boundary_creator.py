@@ -159,10 +159,10 @@ def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
     elif boundaries_type == 'tokenizer':
         if kwargs['tokenizer_dropout'] == 0:
             filename = os.path.join(datadir,
-                                    f'cache_{kwargs["tokenizer_type"]}_{kwargs["tokenizer_vocab_size"]}.pt')
+                                    f'cache_{kwargs["tokenizer_type"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
         else:
             filename = os.path.join(datadir,
-                                    f'cache_{kwargs["tokenizer_type"]}_drop{kwargs["tokenizer_dropout"]}_{kwargs["tokenizer_vocab_size"]}.pt')
+    f'cache_{kwargs["tokenizer_type"]}_drop{kwargs["tokenizer_dropout"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
 
     return filename
 

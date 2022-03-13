@@ -167,5 +167,6 @@ def get_lm_corpus(datadir, dataset, **kwargs):
         with utils.distributed.sync_workers() as rank:
             if rank == 0:
                 torch.save(corpus, filename)
+                os.chmod(filename, 0o777)
 
     return corpus
