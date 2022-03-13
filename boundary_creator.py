@@ -7,8 +7,8 @@ class BoundaryCreator():
     def __init__(
         self, boundaries_type, boundary_ids=None,
         move_prob=0.0, deletion_prob=0.0, insert_prob=0.0,
-        clamp_group_sizes = False, min_group_length = 0, max_group_length = 1000*1000, 
-        mean_normal = 5.5, std_normal = 1,
+        clamp_group_sizes=False, min_group_length=0, max_group_length=1000*1000,
+        mean_normal=5.5, std_normal=1, **kwargs,
     ):
         self.boundaries_type = boundaries_type
         if boundaries_type == 'ids':
