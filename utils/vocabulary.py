@@ -78,7 +78,7 @@ class Vocab(object):
             if cnt < self.min_freq:
                 break
             self.add_symbol(sym)
-        
+
         assert self.idx2sym[0] == '_', 'first symbol is not a space'
 
         print('final vocab size {} from {} unique tokens'.format(
@@ -100,7 +100,8 @@ class Vocab(object):
                 encoded_text.append(self.convert_to_tensor(symbols))
                 
                 if extract_boundaries:
-                    boundaries.append(boundary_creator.get_boundaries(line))
+                    line_cleaned = line.replace(' ', '').replace('_', ' ')
+                    boundaries.append(boundary_creator.get_boundaries(line_cleaned))
 
         if extract_boundaries:
             boundaries = torch.cat(boundaries)

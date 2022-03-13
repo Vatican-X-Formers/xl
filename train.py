@@ -845,8 +845,6 @@ def main():
     if not args.no_env:
         log_env_info()
 
-    register_ignoring_timeout_handler()
-
     # Set the random seed manually for reproducibility.
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

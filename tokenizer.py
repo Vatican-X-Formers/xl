@@ -36,14 +36,7 @@ def parse_args():
     return args
 
 
-def load_corpus_and_split(corpus_filepath, chunks):
-    lines = []
-    with open(corpus_filepath) as file:
-        for i, line in enumerate(file):
-            lines.append(line.strip())
-
-    assert len(lines) == 1
-    corpus = lines[0]
+def split_text_to_chunks_on_spaces(corpus, chunks):
     corpus_len = len(corpus)
     chunk_len = (corpus_len + chunks - 1) // chunks
     split_indexes = [0]
@@ -59,6 +52,17 @@ def load_corpus_and_split(corpus_filepath, chunks):
 
     return [corpus[left:right] for left, right in zip(split_indexes[:-1],
                                                       split_indexes[1:])]
+
+
+def load_corpus_and_split(corpus_filepath, chunks):
+    lines = []
+    with open(corpus_filepath) as file:
+        for i, line in enumerate(file):
+            lines.append(line.strip())
+
+    assert len(lines) == 1
+    corpus = lines[0]
+    return split_text_to_chunks_on_spaces(corpus, chunks)
 
 
 class TokeniserTrainer():
@@ -262,11 +266,14 @@ class AutoregressiveTokeniser():
         """
         return getattr(self, algorithm)
 
-    def get_boundaries_for_word(self, word, algorithm):
+    def get_boundaries_for_word(self, word, algorithm=None):
+        if algorithm is None:
+            assert getattr(self, 'algorithm', None) is not None
+            algorithm = self.algorithm
         boundary_predictor = self.get_boundary_predictor(algorithm)
 
         acc = '▁'
-        boundaries = torch.zeros(len(word)).bool()
+        boundaries = np.zeros(len(word))
 
         for i in range(len(word)):
             if boundary_predictor(acc, word[i]):
@@ -277,27 +284,58 @@ class AutoregressiveTokeniser():
 
         return boundaries
 
-    def get_boundaries(self, text, algorithm=None):
-        if algorithm is None:
-            assert getattr(self, 'algorithm', None) is not None
-            algorithm = self.algorithm
+    def job(self, words, algorithm=None):
+        words_dict = {}
+        for word in words:
+            boundaries = self.get_boundaries_for_word(word)
+            words_dict[word] = boundaries
+        return words_dict
 
+    def job2(self, text):
         current_len = 0
         text_len = len(text)
-        boundaries = torch.zeros(text_len).bool()
+        boundaries = np.zeros(text_len)
+        words = text.split(' ')
+        n_words = len(words)
 
-        for idx, word in enumerate(text.split(' ')):
+        for idx, word in enumerate(words):
             if len(word) > 0:
-                boundaries[current_len:current_len + len(word)] = \
-                    self.get_boundaries_for_word(word, algorithm)
+                boundaries[current_len:current_len + len(word)] = self.words_boundaries[word]
                 current_len += len(word)
 
-            if not (idx + 1 == len(text.split(' '))):
+            if not (idx + 1 == n_words):
                 # space handling
                 boundaries[current_len] = 1
                 current_len += 1
 
         return boundaries
+
+    def get_boundaries(self, text, algorithm=None, n_proc=16, chunks=100):
+        words = text.split(' ')
+        distinct_words = list(set(words))
+        chunk_len = (len(distinct_words) + chunks - 1) // chunks
+        jobs = [distinct_words[left:left + chunk_len] for left in range(0, len(distinct_words), chunk_len)]
+        words_boundaries = {}
+
+        print(f'There are {len(words)} in total to encode, \
+              {len(distinct_words)} distinct ones, chunk_len = {chunk_len}')
+
+        with Pool(n_proc) as pool:
+            for job_dict in tqdm.tqdm(pool.imap_unordered(self.job, jobs), total=len(jobs)):
+                for x, y in job_dict.items():
+                    words_boundaries[x] = y
+
+        self.words_boundaries = words_boundaries
+        print('Finished encoding the words')
+
+        jobs2 = split_text_to_chunks_on_spaces(text, chunks)
+        boundaries_acc = []
+
+        with Pool(n_proc) as pool:
+            for boundaries in tqdm.tqdm(pool.imap(self.job2, jobs2), total=len(jobs)):
+                boundaries_acc.append(boundaries)
+
+        return torch.tensor(np.concatenate(boundaries_acc)).bool()
 
 
 if __name__ == "__main__":
