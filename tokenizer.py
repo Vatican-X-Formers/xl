@@ -251,6 +251,23 @@ class AutoregressiveTokeniser():
         else:
             return False
 
+    def approach3_5(self, current_subword, new_char):
+        """
+            Very similar to approach2, but we calculate the probabilities
+            differently. Specifically here we ask explicitly about probability
+            of starting a new group given a current_subword and a new_char.
+            We put a boundary if negatives > positives
+                positives - # of tokens that start with
+                    current_subword+new_char
+                negatives - # of tokens current_subword which are before the
+                    token starting with the new_char
+        """
+        if self.tokenizer_data[current_subword + '+' + new_char] >= \
+                self.tokenizer_data[current_subword + new_char + '*']:
+            return True
+        else:
+            return False
+
     def approach4(self, current_subword, new_char):
         """
            Combination of approach 2 and 3. We put a boundary if the
