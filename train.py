@@ -557,7 +557,9 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
     with torch.cuda.amp.autocast(enable_autocast):
         seq_loss, mems[i], stats, aux_loss = model(data_i, target_i, mems[i], boundaries=boundaries_i)
         seq_loss = seq_loss.float().mean().type_as(seq_loss)
-        total_loss = (seq_loss + aux_loss) / args.batch_chunk
+        total_loss = seq_loss / args.batch_chunk
+        # TODO, right now i boundary predictor loss
+        # total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
     if args.swap_mem and mems[i] is not None:
         mems[i] = mems[i].to(cpu, non_blocking=True)
@@ -570,7 +572,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
     else:
         total_loss.backward()
 
-    return seq_loss.item(), stats
+    return total_loss.item(), stats
 
 
 def train(tr_iter, va_iters, model, para_model, model_config, optimizer,

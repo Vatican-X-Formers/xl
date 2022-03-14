@@ -556,7 +556,6 @@ class MemTransformerLM(nn.Module):
 
         return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()
 
-
     def forward(self, data, target, mems, boundaries=None, special=False):
         # I can keep track of training stats and log them
         stats = {}

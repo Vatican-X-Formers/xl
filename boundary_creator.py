@@ -63,7 +63,7 @@ class BoundaryCreator():
         # Insert
         zeros = batch_zero_ids.size(0)
         # Here I use non_zeros on purpose, I want insert and deletion prob to work similarly
-        to_insert = int(non_zeros*self.insert_prob)
+        to_insert = int(non_zeros * self.insert_prob)
         insert_boundaries = torch.randperm(zeros)[:to_insert].to(final_boundaries.device)
         final_boundaries[(batch_zero_ids[insert_boundaries], elems_zero_ids[insert_boundaries])] = 1
 
@@ -76,6 +76,21 @@ class BoundaryCreator():
         bound_ids = x[(batch_ids, seq_ids)]
         boundaries[(batch_ids, bound_ids)] = True
         return boundaries
+
+    def restrict_max_group_length(self, boundaries):
+        neg_x = (~boundaries)
+
+        y = neg_x.cumsum(-1)
+
+        y[neg_x] = 0
+
+        y = y[:, 1:] - y[:, :-1].cummax(-1).values
+        y = torch.cat([torch.zeros(boundaries.size(0), 1).to(boundaries.device), y], dim=-1)
+        y[neg_x] = 0
+
+        z = (neg_x.int() - y).cumsum(-1)
+
+        return boundaries | ((z % self.max_group_length) == 0)
 
     def get_boundaries(self, data):
         """
@@ -98,8 +113,8 @@ class BoundaryCreator():
             for boundary_id in self.boundary_ids:
                 boundaries |= (data == boundary_id)
         elif self.boundaries_type == "normal":
-            group_sizes = torch.normal(mean=self.mean_normal, 
-                             std=self.std_normal, 
+            group_sizes = torch.normal(mean=self.mean_normal,
+                             std=self.std_normal,
                              size=data.size(),
                              )
             group_sizes = group_sizes.round().clamp(self.min_group_length, self.max_group_length).long().to(data.device)
@@ -117,7 +132,10 @@ class BoundaryCreator():
         else:
             raise NotImplemented
 
-        boundaries = self.corrupt_boundaries(boundaries) 
+        boundaries = self.corrupt_boundaries(boundaries)
+
+        if self.clamp_group_sizes:
+            boundaries = self.restrict_max_group_length(boundaries)
 
         return boundaries
 
