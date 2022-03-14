@@ -222,6 +222,18 @@ class AutoregressiveTokeniser():
         return self.tokenizer_data[current_subword + new_char + '*'] * self.tokenizer_data['+ALL+'] < \
                 self.tokenizer_data[current_subword] * self.tokenizer_data[new_char + '*']
 
+    def approach2_5(self, current_subword, new_char):
+        """
+            We start a new group if:
+                p(current_subword + new_char + *) < p(current_subword) * p(new_char + *)
+            That is, we compare probabilities of segmentation in which we
+            either put a boundary or don't put a boundary. Probability of
+            segmentation is here calculated as probabilities of tokens for
+            unigram model trained on tokenized training corpora
+        """
+        return self.tokenizer_data[current_subword + new_char + '*'] * self.tokenizer_data['+ALL+'] <= \
+                self.tokenizer_data[current_subword] * self.tokenizer_data[new_char + '*']
+
     def approach3(self, current_subword, new_char):
         """
             Very similar to approach2, but we calculate the probabilities

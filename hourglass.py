@@ -481,9 +481,8 @@ class MemTransformerLM(nn.Module):
                 new_mems = concat_mems_hids[:, beg_idx:end_idx].detach()
 
         return new_mems
-        
 
-    def _forward(self, core_input, mems=None, layers = None, mem_len = 0, clamp_len = 0):
+    def _forward(self, core_input, mems=None, layers=None, mem_len=0, clamp_len=0):
         # Core_input is of size (T x B x C)
         # Mems is of size (N_layers x T x B x C)
         qlen, _, _ = core_input.size()
