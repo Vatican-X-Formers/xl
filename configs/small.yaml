@@ -35,7 +35,7 @@ train: &train
    tokenizer_type: 'unigram'
    tokenizer_vocab_size: 5000
    tokenizer_dropout: 0.0
-   tokenizer_algorithm: 'approach1'
+   tokenizer_algorithm: 'approach2_5'
 
 default:
    train:
