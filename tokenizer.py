@@ -26,6 +26,7 @@ def parse_args():
     general.add_argument('--tokenizer_type', default='unigram')
     general.add_argument('--vocab_size', default=5000, type=int)
     general.add_argument('--dropout', default=0.0, type=float)
+    general.add_argument('--pretokenization', default='metaspace')
     general.add_argument('--algorithm', default=None)
     args, _ = parser.parse_known_args()
 
@@ -74,30 +75,42 @@ class TokeniserTrainer():
             self.train_data = load_corpus_and_split(corpus_filepath, chunks)
             assert len(self.train_data) == chunks
 
-    def get_tokenizer_and_trainer(self, tokenizer_type, vocab_size, dropout):
+    def get_tokenizer_and_trainer(self, tokenizer_type, vocab_size, dropout, pretokenization):
         if tokenizer_type == 'bpe':
-            return Tokenizer(BPE(dropout=dropout)), BpeTrainer(vocab_size=vocab_size)
+            tokenizer, trainer = Tokenizer(BPE(dropout=dropout)), BpeTrainer(vocab_size=vocab_size)
         elif tokenizer_type == 'unigram':
-            return Tokenizer(Unigram()), UnigramTrainer(vocab_size=vocab_size)
+            tokenizer, trainer = Tokenizer(Unigram()), UnigramTrainer(vocab_size=vocab_size)
         elif tokenizer_type == 'wordpiece':
-            return Tokenizer(WordPiece(max_input_chars_per_word=1000)), WordPieceTrainer(vocab_size=vocab_size)
+            tokenizer, trainer = Tokenizer(WordPiece(max_input_chars_per_word=1000)), WordPieceTrainer(vocab_size=vocab_size)
 
-    def get_tokenizer_filename(self, tokenizer_type, vocab_size, dropout):
+        if pretokenization == 'metaspace':
+            tokenizer.pre_tokenizer = Metaspace()
+        elif pretokenization == 'none':
+            pass
+
+        return tokenizer, trainer
+
+    def get_tokenizer_filename(self, tokenizer_type, vocab_size, dropout, pretokenization):
         if dropout is not None and dropout > 0.0:
-            return f'{tokenizer_type}-drop{dropout}-{vocab_size}.json'
+            filename = f'{tokenizer_type}-drop{dropout}-{vocab_size}.json'
         else:
-            return f'{tokenizer_type}-{vocab_size}.json'
+            filename = f'{tokenizer_type}-{vocab_size}.json'
 
-    def train(self, tokenizer_type, vocab_size, dropout):
+        if pretokenization != 'metaspace':
+            filename = f'PRE{pretokenization}' + filename
+
+        return filename
+
+    def train(self, tokenizer_type, vocab_size, dropout, pretokenization):
         print(f'Setting up tokenizer training, Type:{tokenizer_type}, Vocab_size:{vocab_size}, Dropout: {dropout}')
         tokenizer, trainer = self.get_tokenizer_and_trainer(tokenizer_type,
                                                             vocab_size,
-                                                            dropout)
-        tokenizer.pre_tokenizer = Metaspace()
+                                                            dropout,
+                                                            pretokenization)
         tokenizer.train_from_iterator(self.train_data, trainer)
 
         filename = self.get_tokenizer_filename(tokenizer_type, vocab_size,
-                                               dropout)
+                                               dropout, pretokenization)
         checkpoint_path = os.path.join(self.save_dir, 'json', filename)
         print(f'Writing the tokeniser under: {checkpoint_path}')
         tokenizer.save(checkpoint_path)
@@ -122,6 +135,16 @@ class TokenizersData():
         words_counted = Counter(words)
 
         freqs = defaultdict(int)
+
+        # for bigram
+        # for left, word in zip(words[:-1], words[1:]):
+        #     tokenization = self.tokenizer.encode(' ' + word)
+        #     offsets = tokenization.offsets
+        #     boundaries = [left for left, _ in offsets]
+
+        #     for i in range(1, len(word) + 1):
+        #         is_boundary = i in boundaries
+        #         freqs[left + '@' + word[:i] + ('(' if is_boundary else ')')] += 1
 
         for word, occurences in words_counted.items():
             # I add the whitespace here because of the Metaspace pretokenizer
@@ -172,7 +195,7 @@ class TokenizersData():
 
 class AutoregressiveTokeniser():
     def __init__(self, corpus_filepath, save_dir, tokenizer_type, vocab_size,
-                 dropout, algorithm):
+                 dropout, pretokenization, algorithm):
         self.corpus_filepath = corpus_filepath
         self.save_dir = save_dir
         self.algorithm = algorithm
@@ -180,7 +203,8 @@ class AutoregressiveTokeniser():
         trainer = TokeniserTrainer(self.corpus_filepath, self.save_dir)
         tokenizer_filename = trainer.get_tokenizer_filename(tokenizer_type,
                                                             vocab_size,
-                                                            dropout)
+                                                            dropout,
+                                                            pretokenization)
         tokenizer_path = os.path.join(self.save_dir, 'json', tokenizer_filename)
         tokenizer_data_path = tokenizer_path.replace('json', 'pkl')
 
@@ -194,7 +218,8 @@ class AutoregressiveTokeniser():
                 tokenizer = Tokenizer.from_file(tokenizer_path)
             else:
                 print('Training a tokeniser from scratch')
-                tokenizer = trainer.train(tokenizer_type, vocab_size, dropout)
+                tokenizer = trainer.train(tokenizer_type, vocab_size, dropout,
+                                         pretokenization)
 
             print('Extracting the necessary data from trained tokeniser')
             tokenizer_data_extractor = TokenizersData(tokenizer,
@@ -398,6 +423,21 @@ class AutoregressiveTokeniser():
         boundaries[groups_beg_ids] = True
         return boundaries
 
+    def get_errors(self, hypo, target, text):
+        bad = hypo != target
+        mistakes = bad.nonzero(as_tuple=True)[0].tolist()
+        for mistake_id in mistakes:
+            left = mistake_id
+            right = mistake_id
+            while text[left] != ' ':
+                left -= 1
+            while text[right] != ' ':
+                right += 1
+            txt = text[left:right]
+            boundary_hypo = hypo[left:right]
+            boundary_gt = target[left:right]
+            pdb.set_trace()
+
 
 def calculate_classification_stats(hypo, target):
     TP = ((hypo == target) & hypo).sum().item()
@@ -421,10 +461,10 @@ if __name__ == "__main__":
     dataset = load_corpus_and_split(args.corpus_filepath, 1)[0]
     auto_tokenizer = AutoregressiveTokeniser(args.corpus_filepath, args.save_dir,
                                         args.tokenizer_type, args.vocab_size,
-                                        args.dropout, args.algorithm)
-    pdb.set_trace()
+                                        args.dropout, args.pretokenization, args.algorithm)
     subpart = 500000
     raw_boundaries = torch.load('raw_boundaries.pt')
     autoreg_boundaries = auto_tokenizer.get_boundaries(dataset[:subpart],
                                                        chunks=1)
+    # auto_tokenizer.get_errors(autoreg_boundaries, raw_boundaries, dataset[:subpart])
     calculate_classification_stats(autoreg_boundaries, raw_boundaries)

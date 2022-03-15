@@ -289,29 +289,26 @@ class Downsampler(nn.Module):
 
         return x
 
+
 class BoundaryPredictor(nn.Module):
-    def __init__(self, mode, d_model, threshold = 0.5):
+    def __init__(self, mode, d_model, threshold=0.5):
         super().__init__()
         self.mode = mode
         self.threshold = threshold
 
         if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
-            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([1, 1.5]).float())
+            # self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([1, 1.5]).float())
+            self.loss = nn.BCEWithLogitsLoss()
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
         if self.mode == 'linear':
-            hidden = hidden[:-1]
-            boundaries_gt = boundaries_gt[1:].float()
-
             preds = self.boundary_predictor(hidden).squeeze(-1)
-            loss = self.loss(preds, boundaries_gt)
+            loss = self.loss(preds, boundaries_gt.float())
 
             preds = torch.sigmoid(preds) >= self.threshold
-
-            boundaries_gt = boundaries_gt.bool()
 
             TP = ((preds == boundaries_gt) & preds).sum().item()
             FP = ((preds != boundaries_gt) & preds).sum().item()
@@ -321,13 +318,14 @@ class BoundaryPredictor(nn.Module):
             if TP == 0:
                 precision, recall = 0, 0
             else:
-                precision = TP/(TP+FP)
-                recall = TP/(TP+FN)
+                precision = TP / (TP + FP)
+                recall = TP / (TP + FN)
 
             pad = torch.ones((1, preds.size(1)), dtype=preds.dtype, device=preds.device)
             preds = torch.cat([pad, preds], dim=0)
 
         return preds, loss, acc, precision, recall
+
 
 class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_layer, n_head, d_model, d_head, d_inner,
@@ -452,8 +450,8 @@ class MemTransformerLM(nn.Module):
                 layer = self.layers[i]
                 if not isinstance(layer, Upsampler) and not isinstance(layer, Downsampler):
                     mems.append(
-                        torch.empty(len(layer), 0, 
-                                dtype=param.dtype, 
+                        torch.empty(len(layer), 0,
+                                dtype=param.dtype,
                                 device=param.device)
                     )
             return mems
