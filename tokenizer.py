@@ -124,7 +124,20 @@ class TokenizersData():
         freqs = defaultdict(int)
 
         for word, occurences in words_counted.items():
-            tokens = self.tokenizer.encode(word).tokens
+            # I add the whitespace here because of the Metaspace pretokenizer
+            # from huggingface. By adding the whitespace here I can easier
+            # detect I should place the boundary after the first character
+            tokenization = self.tokenizer.encode(' ' + word)
+            tokens = tokenization.tokens
+            offsets = tokenization.offsets
+            boundaries = [left for left, _ in offsets]
+
+            freqs['+ALL+'] += len(tokens) * occurences
+
+            for i in range(1, len(word) + 1):
+                is_boundary = i in boundaries
+                freqs[word[:i] + ('(' if is_boundary else ')')] += occurences
+
             for token_id, token in enumerate(tokens):
                 freqs[token] += occurences
 
@@ -149,14 +162,6 @@ class TokenizersData():
                                                    self.train_data)):
                 for k, v in x.items():
                     global_freq[k] += v
-
-        total_tokens = 0
-        for k, v in global_freq.items():
-            if not k.endswith('*'):
-                total_tokens += v
-
-        # Special key
-        global_freq['+ALL+'] = total_tokens
 
         with open(self.save_path, 'wb') as file:
             pickle.dump(global_freq, file)
@@ -200,7 +205,7 @@ class AutoregressiveTokeniser():
         self.tokenizer_data = tokenizer_data
         self.raw_tokenizer = Tokenizer.from_file(tokenizer_path)
 
-    def approach1(self, current_subword, new_char):
+    def approach1(self, current_subword, new_char, current_prefix, current_boundaries):
         """
             We start a new group if there hasn't been a token in training
             corpora that starts with (current_subword + new_char)
@@ -210,7 +215,7 @@ class AutoregressiveTokeniser():
         else:
             return False
 
-    def approach2(self, current_subword, new_char):
+    def approach2(self, current_subword, new_char, current_prefix, current_boundaries):
         """
             We start a new group if:
                 p(current_subword + new_char + *) < p(current_subword) * p(new_char + *)
@@ -222,7 +227,7 @@ class AutoregressiveTokeniser():
         return self.tokenizer_data[current_subword + new_char + '*'] * self.tokenizer_data['+ALL+'] < \
                 self.tokenizer_data[current_subword] * self.tokenizer_data[new_char + '*']
 
-    def approach2_5(self, current_subword, new_char):
+    def approach2_5(self, current_subword, new_char, current_prefix, current_boundaries):
         """
             We start a new group if:
                 p(current_subword + new_char + *) < p(current_subword) * p(new_char + *)
@@ -234,7 +239,7 @@ class AutoregressiveTokeniser():
         return self.tokenizer_data[current_subword + new_char + '*'] * self.tokenizer_data['+ALL+'] <= \
                 self.tokenizer_data[current_subword] * self.tokenizer_data[new_char + '*']
 
-    def approach3(self, current_subword, new_char):
+    def approach3(self, current_subword, new_char, current_prefix, current_boundaries):
         """
             Very similar to approach2, but we calculate the probabilities
             differently. Specifically here we ask explicitly about probability
@@ -251,7 +256,7 @@ class AutoregressiveTokeniser():
         else:
             return False
 
-    def approach3_5(self, current_subword, new_char):
+    def approach3_5(self, current_subword, new_char, current_prefix, current_boundaries):
         """
             Very similar to approach2, but we calculate the probabilities
             differently. Specifically here we ask explicitly about probability
@@ -268,13 +273,16 @@ class AutoregressiveTokeniser():
         else:
             return False
 
-    def approach4(self, current_subword, new_char):
+    def approach4(self, current_subword, new_char, current_prefix, current_boundaries):
         """
            Combination of approach 2 and 3. We put a boundary if the
            probability from approach 3 that we finish current_subword
            multiplied by the probability of new_char* is greater than
            probability of token (current_subword+new_char*)
         """
+        if self.approach1(current_subword, new_char, current_prefix, current_boundaries):
+            return True
+
         positives = self.tokenizer_data[current_subword + new_char + '*']
         negatives = self.tokenizer_data[current_subword + '+' + new_char]
         prob_of_finish = negatives / (positives + negatives)
@@ -283,6 +291,9 @@ class AutoregressiveTokeniser():
             return True
         else:
             return False
+
+    def approach5(self, current_subword, new_char, current_prefix, current_boundaries):
+        return self.tokenizer_data[current_prefix + '('] > self.tokenizer_data[current_prefix + ')']
 
     def get_boundary_predictor(self, algorithm):
         """
@@ -305,7 +316,7 @@ class AutoregressiveTokeniser():
         boundaries = np.zeros(len(word))
 
         for i in range(len(word)):
-            if boundary_predictor(acc, word[i]):
+            if boundary_predictor(acc, word[i], word[:i + 1], boundaries):
                 boundaries[i] = True
                 acc = word[i]
             else:
@@ -366,10 +377,54 @@ class AutoregressiveTokeniser():
 
         return torch.tensor(np.concatenate(boundaries_acc)).bool()
 
+    def print_tokens(self, text):
+        boundaries = self.get_boundaries(text, chunks=1)
+        tokens = []
+        acc = ''
+        for a, b in zip(text, boundaries.tolist()):
+            if a == ' ':
+                a = '▁'
+            if b == True:
+                tokens.append(acc)
+                acc = a
+            else:
+                acc += a
+        tokens.append(acc)
+        print(tokens)
+
+    def get_raw_boundaries(self, text):
+        boundaries = torch.zeros(len(text), dtype=torch.bool)
+        groups_beg_ids = [a for a, _ in self.raw_tokenizer.encode(text).offsets]
+        boundaries[groups_beg_ids] = True
+        return boundaries
+
+
+def calculate_classification_stats(hypo, target):
+    TP = ((hypo == target) & hypo).sum().item()
+    FP = ((hypo != target) & hypo).sum().item()
+    FN = ((hypo != target) & (~hypo)).sum().item()
+
+    acc = (hypo == target).sum().item() / target.numel()
+
+    if TP == 0:
+        print('There are 0 TP, weird')
+        precision, recall = 0, 0
+    else:
+        precision = TP / (TP + FP)
+        recall = TP / (TP + FN)
+
+    print(f'Stats for this approach are: Total acc: {acc}\nPrecision: {precision} Recall: {recall}')
+
 
 if __name__ == "__main__":
     args = parse_args()
-    dataset = load_corpus_and_split(args.corpus_filepath, 1)[0][:500]
+    dataset = load_corpus_and_split(args.corpus_filepath, 1)[0]
     auto_tokenizer = AutoregressiveTokeniser(args.corpus_filepath, args.save_dir,
                                         args.tokenizer_type, args.vocab_size,
                                         args.dropout, args.algorithm)
+    pdb.set_trace()
+    subpart = 500000
+    raw_boundaries = torch.load('raw_boundaries.pt')
+    autoreg_boundaries = auto_tokenizer.get_boundaries(dataset[:subpart],
+                                                       chunks=1)
+    calculate_classification_stats(autoreg_boundaries, raw_boundaries)
