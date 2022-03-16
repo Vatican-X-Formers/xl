@@ -442,12 +442,6 @@ class MemTransformerLM(nn.Module):
                 if special:
                     hidden = hidden.clone().detach()
 
-                if self.boundary_predictor.mode == 'linear':
-                    _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
-                    stats['acc_boundaries'] = acc_boundaries
-                    stats['loss_boundaries'] = loss_boundaries.item()
-                    stats['precision'] = precision
-                    stats['recall'] = recall
 
                 if special:
                     return loss_boundaries, stats
@@ -462,6 +456,13 @@ class MemTransformerLM(nn.Module):
                 if self.pre_lnorm:
                     hidden = self.layer_norms[mems_index](hidden)
                 mems_index += 1
+
+        if self.boundary_predictor.mode == 'linear':
+            _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+            stats['acc_boundaries'] = acc_boundaries
+            stats['loss_boundaries'] = loss_boundaries.item()
+            stats['precision'] = precision
+            stats['recall'] = recall
 
         hidden = hidden[-tgt_len:]
         logit = self.final_cast(hidden)
