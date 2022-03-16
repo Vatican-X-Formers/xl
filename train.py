@@ -304,10 +304,8 @@ def evaluate(eval_iter, model, args):
         for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
-            enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.cuda.amp.autocast(enable_autocast):
-                loss, stats, aux_loss = model(data, target, boundaries)
-                loss = loss.float().mean().type_as(loss)
+            loss, stats, aux_loss = model(data, target, boundaries)
+            loss = loss.float().mean().type_as(loss)
 
             total_loss += seq_len * loss.item()
             total_len += seq_len
