@@ -15,27 +15,28 @@ train: &train
    optim: adam
    lr: 0.00025
    warmup_step: 0
-   max_step: 200000
+   max_step: 50000
    tgt_len: 2048
    eval_tgt_lengths: [512]
    eval_total_lengths: [2048]
    batch_size: 8
    multi_gpu: ddp
    log_interval: 100
-   eval_interval: 2000
+   eval_interval: 5000
    text_generation_interval: 25000
    batch_chunk: 1
    pre_lnorm: false
-   funnel_config: "[2, (8,) , 2]"
+   funnel_config: "[4, (0,), 0]"
    downsample_mode: 'naive'
    upsample_mode: 'naive'
    activation_function: relu
-   boundaries_type: 'ids'
+   boundaries_type: 'tokenizer'
    boundary_ids: '["_"]'
    tokenizer_type: 'unigram'
    tokenizer_vocab_size: 5000
    tokenizer_dropout: 0.0
-   tokenizer_algorithm: 'approach2_5'
+   tokenizer_algorithm: 'approachna'
+   boundary_predictor: 'linear'
 
 default:
    train:

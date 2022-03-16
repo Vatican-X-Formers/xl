@@ -298,6 +298,7 @@ def evaluate(eval_iter, model, args):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
+    stats_agg = defaultdict(list)
     # Evaluation
     total_len, total_loss, total_aux_loss = 0, 0., 0.
     with torch.no_grad():
@@ -310,9 +311,12 @@ def evaluate(eval_iter, model, args):
             total_loss += seq_len * loss.item()
             total_len += seq_len
 
+            for k, v in stats.items():
+                stats_agg[k].append(v)
+
     model.train()
 
-    return total_loss / total_len
+    return total_loss / total_len, stats_agg
 
 
 def gen_model_config(args, vocab):
@@ -511,11 +515,13 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
             val_losses = []
 
             for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
-                val_loss = evaluate(va_iters[i], model, args)
+                val_loss, stats_val = evaluate(va_iters[i], model, args)
                 val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
                 val_losses.append(val_loss)
                 if run:
                     run[f'val/loss_tgt{eval_tgt_len}_total{eval_total_len}'].log(val_loss, step=train_step)
+                    for k, v in stats_val.items():
+                        run[f'val/{k}'].log(np.array(v).mean(), step=train_step)
 
             # we assume that first one is the main one
             val_loss = val_losses[0]
@@ -711,11 +717,13 @@ def main():
         test_losses = []
 
         for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
-            test_loss = evaluate(te_iters[i], model, args)
+            test_loss, stats_test = evaluate(te_iters[i], model, args)
             test_loss = utils.distributed.all_reduce_item(test_loss, op='mean')
             test_losses.append(test_loss)
             if run:
                 run[f'test/loss_tgt{eval_tgt_len}_total{eval_total_len}'].log(test_loss, step=train_step)
+                for k, v in stats_test.items():
+                    run[f'val/{k}'].log(np.array(v).mean(), step=train_step)
 
         test_loss = test_losses[0]
 
