@@ -723,7 +723,7 @@ def main():
             if run:
                 run[f'test/loss_tgt{eval_tgt_len}_total{eval_total_len}'].log(test_loss, step=train_step)
                 for k, v in stats_test.items():
-                    run[f'val/{k}'].log(np.array(v).mean(), step=train_step)
+                    run[f'test/{k}'].log(np.array(v).mean(), step=train_step)
 
         test_loss = test_losses[0]
 
