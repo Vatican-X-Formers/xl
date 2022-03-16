@@ -388,9 +388,22 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     # Turn on training mode which enables dropout.
     model.train()
 
+    # Accumulates loss
     train_loss = 0
+
+    # For measuring throuhput, accumulates # of tokens processed
     target_tokens = 0
+
+    # Sometimes, in between epochs, I don't have even number of steps. Like
+    # epoch is 60 steps and I want to log every 50. I log once in the first
+    # epoch but in the second epoch I start from 60 and I'd like to log at 100
+    # and not 110. Here the approach is to gather data from 40 steps, not move
+    # it from previous epoch and divide by 40.
     log_step = 0
+
+    # Values that I get in each step and average them out
+    # There is a bug actually here, I gather the data only from 1 GPU
+    # If that's data from training I should account for that
     stats_agg = defaultdict(list)
 
     log_start_time = time.time()
@@ -500,7 +513,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
             val_losses = []
 
             for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
-                val_loss = evaluate(va_iters[i], model, args, eval_tgt_len, eval_total_len)
+                val_loss = evaluate(va_iters[i], model, args)
                 val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
                 val_losses.append(val_loss)
                 if run:
@@ -700,7 +713,7 @@ def main():
         test_losses = []
 
         for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
-            test_loss = evaluate(te_iters[i], model, args, eval_tgt_len, eval_total_len)
+            test_loss = evaluate(te_iters[i], model, args)
             test_loss = utils.distributed.all_reduce_item(test_loss, op='mean')
             test_losses.append(test_loss)
             if run:
