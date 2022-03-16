@@ -406,7 +406,7 @@ class MemTransformerLM(nn.Module):
 
         return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()
 
-    def forward(self, data, target, boundaries=None, special=False):
+    def forward(self, data, target, boundaries=None, step=0):
         stats = {}
 
         # Data and target are of size T x B
@@ -439,12 +439,18 @@ class MemTransformerLM(nn.Module):
                 # The residual come from just before shortening
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
             elif isinstance(layers, Downsampler):
-                if special:
-                    hidden = hidden.clone().detach()
-
-
-                if special:
-                    return loss_boundaries, stats
+                if self.boundary_predictor.mode == 'linear':
+                    boundaries_preds, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+                    stats['acc_boundaries'] = acc_boundaries
+                    stats['loss_boundaries'] = loss_boundaries.item()
+                    stats['precision'] = precision
+                    stats['recall'] = recall
+                    if step > 5000:
+                        boundaries = boundaries_preds
+                        # Create masks out of boundary vector
+                        downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+                        if 'shortened_length' in self.gather_stats:
+                            stats['shortened_length'] = downsampling_mask.size(2)
 
                 residual = hidden
                 hidden = layers(hidden, downsampling_mask=downsampling_mask)
@@ -456,13 +462,6 @@ class MemTransformerLM(nn.Module):
                 if self.pre_lnorm:
                     hidden = self.layer_norms[mems_index](hidden)
                 mems_index += 1
-
-        if self.boundary_predictor.mode == 'linear':
-            _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
-            stats['acc_boundaries'] = acc_boundaries
-            stats['loss_boundaries'] = loss_boundaries.item()
-            stats['precision'] = precision
-            stats['recall'] = recall
 
         hidden = hidden[-tgt_len:]
         logit = self.final_cast(hidden)

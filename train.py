@@ -294,7 +294,7 @@ def sample_generation(vocab, model, args, temp=1.0, start_seq=[0], steps=100, da
     return generated_sample
 
 
-def evaluate(eval_iter, model, args):
+def evaluate(eval_iter, model, args, step):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
@@ -305,7 +305,7 @@ def evaluate(eval_iter, model, args):
         for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
-            loss, stats, aux_loss = model(data, target, boundaries)
+            loss, stats, aux_loss = model(data, target, boundaries, step=step)
             loss = loss.float().mean().type_as(loss)
 
             total_loss += seq_len * loss.item()
@@ -364,7 +364,8 @@ def get_boundary_config(args):
     return boundary_config
 
 
-def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks, args):
+def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
+                    args, step):
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
 
@@ -373,7 +374,8 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks, arg
     else:
         boundaries_i = None
 
-    seq_loss, stats, aux_loss = model(data_i, target_i, boundaries=boundaries_i)
+    seq_loss, stats, aux_loss = model(data_i, target_i,
+                                      boundaries=boundaries_i, step=step)
     seq_loss = seq_loss.float().mean().type_as(seq_loss)
     total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
@@ -427,11 +429,13 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
             if i < args.batch_chunk - 1 and isinstance(model, DistributedDataParallel):
                 with model.no_sync():
                     train_loss_chunk, stats = train_iteration(
-                        model, i, data_chunks, target_chunks, boundaries_chunks, args
+                        model, i, data_chunks, target_chunks,
+                        boundaries_chunks, args, train_step
                     )
             else:
                 train_loss_chunk, stats = train_iteration(
-                    model, i, data_chunks, target_chunks, boundaries_chunks, args
+                    model, i, data_chunks, target_chunks, boundaries_chunks,
+                    args, train_step
                 )
 
             train_loss += train_loss_chunk
@@ -513,7 +517,8 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
             val_losses = []
 
             for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
-                val_loss, stats_val = evaluate(va_iters[i], model, args)
+                val_loss, stats_val = evaluate(va_iters[i], model, args,
+                                               train_step)
                 val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
                 val_losses.append(val_loss)
                 if run:
@@ -715,7 +720,8 @@ def main():
         test_losses = []
 
         for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
-            test_loss, stats_test = evaluate(te_iters[i], model, args)
+            test_loss, stats_test = evaluate(te_iters[i], model, args,
+                                             train_step)
             test_loss = utils.distributed.all_reduce_item(test_loss, op='mean')
             test_losses.append(test_loss)
             if run:
