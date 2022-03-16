@@ -316,7 +316,6 @@ class MemTransformerLM(nn.Module):
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers)
             ])
-            self.boundary_predictor = BoundaryPredictor(mode=boundary_predictor, d_model=d_model)
         else:
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
@@ -333,8 +332,8 @@ class MemTransformerLM(nn.Module):
             ])
             self.boundary_predictor = BoundaryPredictor(mode=boundary_predictor, d_model=d_model)
 
-        # self.final_cast = nn.Linear(d_model, n_token)
-        # self.crit = torch.nn.CrossEntropyLoss(reduction='none')
+        self.final_cast = nn.Linear(d_model, n_token)
+        self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
         self.clamp_len = clamp_len
@@ -443,13 +442,12 @@ class MemTransformerLM(nn.Module):
                 if special:
                     hidden = hidden.clone().detach()
 
-                if getattr(self, 'boundary_predictor', None) is not None:
-                    if self.boundary_predictor.mode == 'linear':
-                        _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries & (~(data == 0)))
-                        stats['acc_boundaries'] = acc_boundaries
-                        stats['loss_boundaries'] = loss_boundaries.item()
-                        stats['precision'] = precision
-                        stats['recall'] = recall
+                if self.boundary_predictor.mode == 'linear':
+                    _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+                    stats['acc_boundaries'] = acc_boundaries
+                    stats['loss_boundaries'] = loss_boundaries.item()
+                    stats['precision'] = precision
+                    stats['recall'] = recall
 
                 if special:
                     return loss_boundaries, stats
@@ -461,15 +459,6 @@ class MemTransformerLM(nn.Module):
                     hidden,
                     layers=layers,
                 )
-                _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
-                stats['acc_boundaries'] = acc_boundaries
-                stats['loss_boundaries'] = loss_boundaries.item()
-                stats['precision'] = precision
-                stats['recall'] = recall
-                return loss_boundaries, stats, 0
-
-                import sys
-                sys.exit(0)
                 if self.pre_lnorm:
                     hidden = self.layer_norms[mems_index](hidden)
                 mems_index += 1
