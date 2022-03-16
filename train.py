@@ -1,29 +1,10 @@
-# coding: utf-8
-
-# Copyright (c) 2019-2020, NVIDIA CORPORATION. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#       http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import argparse
 import functools
 import itertools
-import logging
 import math
 import os
-import shutil
 import sys
 import time
-import warnings
 from collections import defaultdict
 
 import numpy as np
@@ -38,12 +19,8 @@ import neptune.new as neptune
 import utils
 from data_utils import get_lm_corpus
 from hourglass import MemTransformerLM
-from utils.exp_utils import AverageMeter
 from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import create_exp_dir
-from utils.exp_utils import l2_promote
-from utils.exp_utils import log_env_info
-from utils.exp_utils import register_ignoring_timeout_handler
 import torch.nn.functional as F
 import pdb
 
@@ -66,53 +43,23 @@ def parse_args():
 
     config_args, _ = cfg_parser.parse_known_args()
 
-    if config_args.config is not None and config_args.config_file is not None:
-        with open(config_args.config_file) as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)[config_args.config]['train']
-    else:
-        config = {}
+    assert config_args.config is not None and config_args.config_file is not None
+    with open(config_args.config_file) as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)[config_args.config]['train']
 
+    # Main args
     general = parser.add_argument_group('general setup')
     general.add_argument('--work_dir', default='LM-TFM', type=str,
                          help='Directory for the results')
-    general.add_argument('--append_dataset', action='store_true',
-                         help='Automatically append dataset name to work_dir')
-    general.add_argument('--append_time', action='store_true',
-                         help='Automatically append current time to work_dir')
     general.add_argument('--cuda', action='store_true',
                          help='Run training on a GPU using CUDA')
-    general.add_argument('--fp16', action='store_true',
-                         help='Run training in fp16/mixed precision')
-    general.add_argument('--restart', type=str, default='',
-                         help='Restart training from the saved checkpoint')
     general.add_argument('--debug', action='store_true',
                          help='Run in debug mode (do not create exp dir)')
-    general.add_argument('--log_all_ranks', action='store_true',
-                         help='Enable logging from all distributed ranks')
-    general.add_argument('--txtlog_file', type=str, default='train_log.log',
-                         help='Name of the txt log file')
-    general.add_argument('--save_all', action='store_true',
-                         help='Save all checkpoints')
-    general.add_argument('--no_env', action='store_true',
-                         help='Do not print info on execution env')
-    general.add_argument('--no_eval', action='store_true',
-                         help='Disable model evaluation')
     general.add_argument('--log_interval', type=int, default=10,
                          help='Report interval')
-    general.add_argument('--apex_amp_opt_level', type=str, default='O2',
-                         choices=['O0', 'O1', 'O2', 'O3'],
-                         help='Optimization level for apex amp')
-    general.add_argument('--amp', choices=['apex', 'pytorch'], default='apex',
-                         help='Implementation of automatic mixed precision')
     general.add_argument('--affinity', type=str,
                          default='socket_unique_interleaved',
-                         choices=['socket', 'single', 'single_unique',
-                                  'socket_unique_interleaved',
-                                  'socket_unique_continuous',
-                                  'disabled'],
                          help='type of CPU affinity')
-    general.add_argument('--profile', action='store_true',
-                         help='Enable profiling with DLProf')
 
     dataset = parser.add_argument_group('dataset setup')
     dataset.add_argument('--data', type=str, default='../data/wikitext-103',
@@ -122,14 +69,10 @@ def parse_args():
                          help='Dataset name')
 
     model = parser.add_argument_group('model setup')
-    model.add_argument('--n_layer', type=int, default=16,
-                       help='Number of total layers')
     model.add_argument('--n_head', type=int, default=8,
                        help='Number of heads')
     model.add_argument('--d_head', type=int, default=64,
                        help='Head dimension')
-    model.add_argument('--d_embed', type=int, default=-1,
-                       help='Embedding dimension')
     model.add_argument('--d_model', type=int, default=512,
                        help='Model dimension')
     model.add_argument('--d_inner', type=int, default=2048,
@@ -140,19 +83,8 @@ def parse_args():
                        help='Attention probability dropout rate')
     model.add_argument('--pre_lnorm', action='store_true',
                        help='Apply LayerNorm to the input instead of the output')
-    model.add_argument('--attn_type', type=int, default=0,
-                       help='Attention type. 0 for ours, 1 for Shaw et al,'
-                       '2 for Vaswani et al, 3 for Al Rfou et al.')
-    model.add_argument('--not_tied', action='store_true',
-                       help='Do not tie the word embedding and softmax weights')
     model.add_argument('--clamp_len', type=int, default=-1,
-                       help='Use the same pos embeddings after clamp_len') # XDDDD
-    model.add_argument('--adaptive', action='store_true',
-                       help='Use adaptive softmax')
-    model.add_argument('--div_val', type=int, default=1,
-                       help='Dividend value for adaptive input and softmax')
-    model.add_argument('--sample_softmax', type=int, default=-1,
-                       help='Number of samples in sampled softmax')
+                       help='Use the same pos embeddings after clamp_len')
     model.add_argument('--init', default='normal', type=str,
                        help='Parameter initializer to use')
     model.add_argument('--emb_init', default='normal', type=str,
@@ -166,7 +98,7 @@ def parse_args():
     model.add_argument('--proj_init_std', type=float, default=0.01,
                        help='Parameters initialized by N(0, init_std)')
     model.add_argument('--funnel_config', type=str, default="[3, (8, 3) ,3]",
-        help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
+                       help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
     model.add_argument('--funnel_resample', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
@@ -208,8 +140,6 @@ def parse_args():
                      help='Gradient clipping')
     opt.add_argument('--weight_decay', type=float, default=0.0,
                      help='Weight decay for adam|lamb')
-    opt.add_argument('--patience', type=int, default=0,
-                     help='Patience')
     opt.add_argument('--eta_min', type=float, default=0.000,
                      help='Min learning rate for cosine scheduler')
 
@@ -221,23 +151,19 @@ def parse_args():
     training.add_argument('--batch_chunk', type=int, default=1,
                           help='Split batch into chunks and train with '
                           'gradient accumulation')
-    training.add_argument('--roll', action='store_true', # XXX
+    training.add_argument('--roll', action='store_true',
                           help='Enable random shifts within each data stream')
-    training.add_argument('--tgt_len', type=int, default=192, # XXX
+    training.add_argument('--tgt_len', type=int, default=192,
                           help='Number of tokens to predict')
-    training.add_argument('--ext_len', type=int, default=0, # XXX
+    training.add_argument('--ext_len', type=int, default=0,
                           help='Length of the extended context')
-    training.add_argument('--mem_len', type=int, default=192, # XXX
-                          help='Length of the retained previous heads')
     training.add_argument('--seed', type=int, default=1111,
                           help='Random seed')
     training.add_argument('--multi_gpu', default=None, type=str,
-                          choices=['ddp', 'dp'],
+                          choices=['ddp'],
                           help='Use multiple GPU')
-    training.add_argument('--same_length', action='store_true', # XXX
+    training.add_argument('--same_length', action='store_true',
                           help='Use the same attn length for all tokens')
-    training.add_argument('--swap_mem', action='store_true',
-                          help='Swap memory tensors to cpu')
 
     val = parser.add_argument_group('validation setup')
     val.add_argument('--eval_tgt_lengths', nargs="+")
@@ -251,48 +177,25 @@ def parse_args():
     val.add_argument('--text_generation_interval', type=int, default=5000)
     val.add_argument('--ckpt_path', type=str, default="")
     val.add_argument('--autoreg', action='store_true')
-    val.add_argument('--eval_gt_boundaries', action='store_true')
 
     dist = parser.add_argument_group('distributed setup')
-    dist.add_argument('--local_rank',  type=int,
+    dist.add_argument('--local_rank', type=int,
                       default=os.getenv('LOCAL_RANK', 0),
                       help='Used for multi-process training.')
 
     parser.set_defaults(**config)
     args, _ = parser.parse_known_args()
 
-    args.tied = not args.not_tied
-
     assert len(args.eval_tgt_lengths) == len(args.eval_total_lengths)
-
-    if args.ckpt_path == "":
-        args.ckpt_path = config_args.config_file
-
-    if args.d_embed < 0:
-        args.d_embed = args.d_model
 
     if args.batch_size % args.batch_chunk != 0:
         raise RuntimeError('Batch size needs to be divisible by batch chunk')
 
-    if args.fp16 and args.amp == 'apex' and 'apex' not in sys.modules:
-        raise RuntimeError(
-            'APEX AMP unavailable, install APEX or switch to pytorch AMP'
-        )
-
     return args
 
 
-def save_checkpoint(args, model, model_config, optimizer, scheduler, scaler,
-                    vocab, epoch, batch, last_iter, train_step, best_val_loss,
-                    is_best, work_dir):
-    if args.fp16:
-        if args.amp == 'pytorch':
-            amp_state = scaler.state_dict()
-        elif args.amp == 'apex':
-            raise NotImplementedError
-    else:
-        amp_state = None
-
+def save_checkpoint(args, model, model_config, optimizer, scheduler,
+                    vocab, epoch, batch, last_iter, train_step, work_dir):
     state = {
         'args': args,
         'model_config': model_config,
@@ -300,12 +203,10 @@ def save_checkpoint(args, model, model_config, optimizer, scheduler, scaler,
         'optimizer_state': optimizer.state_dict(),
         'scheduler_state': scheduler.state_dict(),
         'vocab': vocab,
-        'amp_state': amp_state,
         'epoch': epoch,
         'batch': batch,
         'last_iter': last_iter,
         'train_step': train_step,
-        'best_val_loss': best_val_loss,
         }
 
     last_chkpt_fname = 'checkpoint_last.pt'
@@ -313,23 +214,8 @@ def save_checkpoint(args, model, model_config, optimizer, scheduler, scaler,
     with utils.distributed.sync_workers() as rank:
         last_chkpt_path = os.path.join(work_dir, last_chkpt_fname)
         if rank == 0:
-            # always save last checkpoint
-            logging.info(f'Saving checkpoint to {last_chkpt_path}')
+            print(f'Saving checkpoint to {last_chkpt_path}')
             torch.save(state, last_chkpt_path)
-
-            # save best checkpoint if better than previous best
-            if is_best:
-                best_chkpt_fname = 'checkpoint_best.pt'
-                best_chkpt_path = os.path.join(work_dir, best_chkpt_fname)
-                logging.info(f'Saving checkpoint to {best_chkpt_path}')
-                shutil.copy(last_chkpt_path, best_chkpt_path)
-
-            # save every checkpoint if save_all is true
-            if args.save_all:
-                step_chkpt_fname = f'checkpoint_{train_step}.pt'
-                step_chkpt_path = os.path.join(work_dir, step_chkpt_fname)
-                logging.info(f'Saving checkpoint to {step_chkpt_path}')
-                shutil.copy(last_chkpt_path, step_chkpt_path)
 
 
 def load_checkpoint(path):
@@ -337,7 +223,7 @@ def load_checkpoint(path):
         path = os.path.join(path, 'checkpoint_last.pt')
 
     dst = f'cuda:{torch.cuda.current_device()}'
-    logging.info(f'Loading checkpoint from {path}')
+    print(f'Loading checkpoint from {path}')
     checkpoint = torch.load(path, map_location=dst)
     return checkpoint
 
@@ -363,185 +249,118 @@ def weights_init(m, args):
     elif classname.find('Downsampler') != -1:
         if hasattr(m, 'leftmost_group'):
             init_weight(m.leftmost_group, args)
-    elif classname.find('AdaptiveEmbedding') != -1:
-        if hasattr(m, 'emb_projs'):
-            for i in range(len(m.emb_projs)):
-                if m.emb_projs[i] is not None:
-                    nn.init.normal_(m.emb_projs[i], 0.0, args.proj_init_std)
     elif classname.find('Embedding') != -1:
         if hasattr(m, 'weight'):
             init_weight(m.weight, args)
-    elif classname.find('ProjectedAdaptiveLogSoftmax') != -1:
-        if hasattr(m, 'cluster_weight') and m.cluster_weight is not None:
-            init_weight(m.cluster_weight, args)
-        if hasattr(m, 'cluster_bias') and m.cluster_bias is not None:
-            init_bias(m.cluster_bias)
-        if hasattr(m, 'out_projs'):
-            for i in range(len(m.out_projs)):
-                if m.out_projs[i] is not None:
-                    nn.init.normal_(m.out_projs[i], 0.0, args.proj_init_std)
-        if hasattr(m, 'out_layers_weights'):
-            for i in range(len(m.out_layers_weights)):
-                if m.out_layers_weights[i] is not None:
-                    init_weight(m.out_layers_weights[i], args)
     elif classname.find('LayerNorm') != -1:
         if hasattr(m, 'weight'):
             nn.init.normal_(m.weight, 1.0, args.init_std)
         if hasattr(m, 'bias') and m.bias is not None:
             init_bias(m.bias)
     elif classname.find('TransformerLM') != -1:
-        if hasattr(m, 'r_emb'):
-            init_weight(m.r_emb, args)
         if hasattr(m, 'r_w_bias'):
             init_weight(m.r_w_bias, args)
         if hasattr(m, 'r_r_bias'):
             init_weight(m.r_r_bias, args)
-        if hasattr(m, 'r_bias'):
-            init_bias(m.r_bias)
-
-
-def update_dropout(m, args):
-    classname = m.__class__.__name__
-    if classname.find('Dropout') != -1:
-        if hasattr(m, 'p'):
-            m.p = args.dropout
-
-
-def update_dropatt(m, args):
-    if hasattr(m, 'dropatt'):
-        m.dropatt.p = args.dropatt
 
 
 def sample_generation(vocab, model, args, temp=1.0, start_seq=[0], steps=100, dataset='text8'):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
-    if args.mem_len == 0:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len + args.tgt_len - args.eval_tgt_len,
-                           mem_len=args.mem_len
-                           )
-    else:
-        model.reset_length(tgt_len=args.eval_tgt_len,
-                           ext_len=args.ext_len,
-                           mem_len=args.mem_len + args.tgt_len - args.eval_tgt_len,
-                           )
-
     start_len = len(start_seq)
     generated_sequence = start_seq
 
     with torch.no_grad():
         for i in range(steps):
-            mems, target = None, None
+            target = None
             data = torch.tensor(generated_sequence).unsqueeze(1).cuda()
 
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                logits = model(data, target, mems)
+                logits = model(data, target)
                 probs = F.softmax(logits[-1, 0, :], dim=0)
                 next_index = probs.cpu().multinomial(num_samples=1, replacement=True).item()
                 generated_sequence.append(next_index)
 
-    model.reset_length(tgt_len=args.tgt_len,
-                       ext_len=args.ext_len,
-                       mem_len=args.mem_len
-                       )
     model.train()
 
     generated_sample = vocab.convert_to_sent(generated_sequence[start_len:])
 
     if dataset == 'text8':
         generated_sample = generated_sample.replace(' ', '').replace('_', ' ')
-    elif dataset == 'enwik8':
-        raise NotImplementedError
 
     return generated_sample
 
 
-def evaluate(eval_iter, model, args, eval_tgt_len, eval_total_len):
+def evaluate(eval_iter, model, args):
     # Turn on evaluation mode which disables dropout.
     model.eval()
-
-    # If the model does not use memory at all, make the ext_len longer.
-    # Otherwise, make the mem_len longer and keep the ext_len the same.
-    if args.mem_len == 0:
-        model.reset_length(tgt_len=eval_tgt_len,
-                           ext_len=eval_total_len - eval_tgt_len,
-                           mem_len=0
-                           )
-    else:
-        assert args.ext_len == 0
-        model.reset_length(tgt_len=eval_tgt_len,
-                           ext_len=0,
-                           mem_len=eval_total_len - eval_tgt_len,
-                           )
 
     # Evaluation
     total_len, total_loss, total_aux_loss = 0, 0., 0.
     with torch.no_grad():
-        mems = None
         for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
             with torch.cuda.amp.autocast(enable_autocast):
-                loss, mems, stats, aux_loss = model(data, target, mems, boundaries)
+                loss, stats, aux_loss = model(data, target, boundaries)
                 loss = loss.float().mean().type_as(loss)
-
-            if 'sum_of_losses_per_group_size' in stats.keys():
-                a += stats['sum_of_losses_per_group_size'].cpu()
-                b += stats['number_of_groups'].cpu()
 
             total_loss += seq_len * loss.item()
             total_len += seq_len
 
-    # Switch back to the training mode
-    model.reset_length(tgt_len=args.tgt_len,
-                       ext_len=args.ext_len,
-                       mem_len=args.mem_len
-                       )
     model.train()
 
     return total_loss / total_len
 
 
-def gen_model_config(args, vocab): 
+def gen_model_config(args, vocab):
     ntokens = len(vocab)
     model_config = {
         'n_token': ntokens,
-        'n_layer': args.n_layer,
         'n_head': args.n_head,
         'd_model': args.d_model,
         'd_head': args.d_head,
         'd_inner': args.d_inner,
         'dropout': args.dropout,
         'dropatt': args.dropatt,
-        'dtype': None,
-        'tie_weight': args.tied,
-        'd_embed': args.d_embed,
-        'div_val': args.div_val,
-        'tie_projs': [False],
         'pre_lnorm': args.pre_lnorm,
-        'tgt_len': args.tgt_len,
-        'ext_len': args.ext_len,
-        'mem_len': args.mem_len,
-        'cutoffs': [],
         'same_length': args.same_length,
-        'attn_type': args.attn_type,
         'clamp_len': args.clamp_len,
-        'sample_softmax': args.sample_softmax,
         'funnel_config': args.funnel_config,
         'funnel_resample': args.funnel_resample,
         'activation_function': args.activation_function,
         'gather_stats': args.gather_stats,
         'boundary_predictor': args.boundary_predictor,
         }
+
     return model_config
 
 
-def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunks,
-                    scaler, optimizer, device, delay_unscale, args):
-    cpu = torch.device('cpu')
+def get_boundary_config(args):
+    boundary_config = {
+        'move_prob': args.move_prob,
+        'deletion_prob': args.deletion_prob,
+        'insert_prob': args.insert_prob,
+        'clamp_group_sizes': args.clamp_group_sizes,
+        'min_group_length': args.min_group_length,
+        'max_group_length': args.max_group_length,
+        'mean_normal': args.mean_normal,
+        'std_normal': args.std_normal,
+        'boundary_ids': args.boundary_ids,
+        'boundaries_type': args.boundaries_type,
+        'tokenizer_type': args.tokenizer_type,
+        'tokenizer_vocab_size': args.tokenizer_vocab_size,
+        'tokenizer_dropout': args.tokenizer_dropout,
+        'tokenizer_save_dir': args.tokenizer_save_dir,
+        'tokenizer_algorithm': args.tokenizer_algorithm,
+    }
+    return boundary_config
+
+
+def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks, args):
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
 
@@ -550,35 +369,20 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, boundaries_chunk
     else:
         boundaries_i = None
 
-    if args.swap_mem and mems[i] is not None:
-        mems[i] = mems[i].to(device, non_blocking=True)
+    seq_loss, stats, aux_loss = model(data_i, target_i, boundaries=boundaries_i)
+    seq_loss = seq_loss.float().mean().type_as(seq_loss)
+    total_loss = seq_loss / args.batch_chunk
+    # TODO, right now i boundary predictor loss
+    # total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
-    enable_autocast = args.fp16 and args.amp == 'pytorch'
-    with torch.cuda.amp.autocast(enable_autocast):
-        seq_loss, mems[i], stats, aux_loss = model(data_i, target_i, mems[i], boundaries=boundaries_i)
-        seq_loss = seq_loss.float().mean().type_as(seq_loss)
-        total_loss = seq_loss / args.batch_chunk
-        # TODO, right now i boundary predictor loss
-        # total_loss = (seq_loss + aux_loss) / args.batch_chunk
-
-    if args.swap_mem and mems[i] is not None:
-        mems[i] = mems[i].to(cpu, non_blocking=True)
-
-    if args.fp16:
-        if args.amp == 'pytorch':
-            scaler.scale(total_loss).backward()
-        elif args.amp == 'apex':
-            raise NotImplementedError
-    else:
-        total_loss.backward()
+    total_loss.backward()
 
     return total_loss.item(), stats
 
 
-def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
-          optimizer_sparse, scheduler, scheduler_sparse, scaler, vocab, epoch,
-          last_batch, last_iter, train_step, best_val_loss, meters,
-          timeout_handler, device, args):
+def train(tr_iter, va_iters, model, model_config, optimizer,
+          scheduler, vocab, epoch, last_iter, train_step,
+          timeout_handler, args):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -586,17 +390,11 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
     target_tokens = 0
     log_step = 0
     stats_agg = defaultdict(list)
-    log_start_time = time.time()
 
-    mems = [None for _ in range(args.batch_chunk)]
+    log_start_time = time.time()
     train_iter = tr_iter.get_fixlen_iter(start=last_iter)
 
-    times = defaultdict(list)
-
-    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=last_batch + 1):
-        t0 = time.time()
-        if batch > 1:
-            times['data_loader'].append(t3-t0)
+    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
         log_step += 1
         target_tokens += target.numel()
 
@@ -611,22 +409,17 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
             boundaries_chunks = None
 
         for i in range(args.batch_chunk):
-            t1 = time.time()
-            if i < args.batch_chunk - 1 and isinstance(para_model, DistributedDataParallel):
-                with para_model.no_sync():
+            if i < args.batch_chunk - 1 and isinstance(model, DistributedDataParallel):
+                with model.no_sync():
                     train_loss_chunk, stats = train_iteration(
-                        para_model, i, mems, data_chunks, target_chunks, boundaries_chunks,
-                        scaler, optimizer, device, True, args
+                        model, i, data_chunks, target_chunks, boundaries_chunks, args
                     )
             else:
                 train_loss_chunk, stats = train_iteration(
-                    para_model, i, mems, data_chunks, target_chunks, boundaries_chunks,
-                    scaler, optimizer, device, False, args
+                    model, i, data_chunks, target_chunks, boundaries_chunks, args
                 )
 
             train_loss += train_loss_chunk
-            t2 = time.time()
-            times['forward'].append(t2 - t1)
 
         # Custom stats added by me
         for k, v in stats.items():
@@ -636,45 +429,24 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
         stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
 
         # if run and train_step % args.text_generation_interval == 0:
-            # generated_sample = sample_generation(vocab, model, args)
-            # run['gen/text'].log(generated_sample)
+        #     generated_sample = sample_generation(vocab, model, args)
+        #     run['gen/text'].log(generated_sample)
         # Finish of custom statistics
 
-        if args.fp16:
-            if args.amp == 'pytorch':
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            elif args.amp == 'apex':
-                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
-        else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-
-        if args.fp16 and args.amp == 'pytorch':
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            optimizer.step()
-            if optimizer_sparse:
-                optimizer_sparse.step()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        optimizer.step()
 
         # step-wise learning rate annealing
         train_step += 1
-        if args.scheduler in ['cosine', 'constant', 'dev_perf']:
+        if args.scheduler == 'cosine':
             # linear warmup stage
             if train_step < args.warmup_step:
                 curr_lr = args.lr * train_step / args.warmup_step
                 optimizer.param_groups[0]['lr'] = curr_lr
-                if optimizer_sparse:
-                    optimizer_sparse.param_groups[0]['lr'] = curr_lr * 2
             else:
-                if args.scheduler == 'cosine':
-                    scheduler.step(train_step - args.warmup_step)
-                    if scheduler_sparse:
-                        scheduler_sparse.step(train_step - args.warmup_step)
-        elif args.scheduler == 'inv_sqrt':
-            scheduler.step(train_step)
-            if scheduler_sparse:
-                scheduler_sparse.step(train_step)
+                scheduler.step(train_step - args.warmup_step)
+        else:
+            raise NotImplementedError
 
         if train_step % args.log_interval == 0 or train_step == 1:
             cur_loss = train_loss / log_step
@@ -690,7 +462,6 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
             lr = optimizer.param_groups[0]['lr']
             throughput = target_tokens / elapsed
             throughput = utils.distributed.all_reduce_item(throughput, op='sum')
-            meters['train_throughput'].update(throughput)
             target_tokens = 0
 
             log_str = '| epoch {:3d} step {:>8d} | batches {:>6d} / {:d} | lr {:.3e} ' \
@@ -704,6 +475,7 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
                     throughput,
                     cur_loss,
                     )
+            print_once(log_str, args)
 
             if run:
                 run['lr'].log(lr, step=train_step)
@@ -713,18 +485,11 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
                     run[k].log(np.array(v).mean(), step=train_step)
                 stats_agg = defaultdict(list)
 
-            if args.dataset in ['enwik8', 'text8']:
-                log_str += ' | bpc {:9.5f}'.format(cur_loss / math.log(2))
-            else:
-                log_str += ' | ppl {:9.2f}'.format(math.exp(cur_loss))
-
-            logging.info(log_str)
-
         do_periodic_eval = train_step % args.eval_interval == 0
         is_final_step = train_step == args.max_step
         interrupted = timeout_handler.interrupted
 
-        if (do_periodic_eval or is_final_step or interrupted) and not args.no_eval:
+        if (do_periodic_eval or is_final_step or interrupted):
             eval_start_time = time.time()
 
             eval_tgt_lengths = args.eval_tgt_lengths
@@ -742,7 +507,10 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
             # we assume that first one is the main one
             val_loss = val_losses[0]
 
-            logging.info('-' * 100)
+            if run:
+                run['val/loss'].log(val_loss, step=train_step)
+
+            print_once('-' * 100, args)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
                       '| valid loss {:5.2f}'.format(
                           train_step // args.eval_interval,
@@ -750,48 +518,37 @@ def train(tr_iter, va_iters, model, para_model, model_config, optimizer,
                           (time.time() - eval_start_time),
                           val_loss,
                           )
-
-            if run:
-                run['val/loss'].log(val_loss, step=train_step)
-
-            if args.dataset in ['enwik8', 'text8']:
-                log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
-            else:
-                log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
-
-            logging.info(log_str)
-            logging.info('-' * 100)
+            print_once(log_str, args)
+            print_once('-' * 100, args)
 
             last_iter = tr_iter.last_iter
 
-            # Check if the validation loss is the best we've seen so far.
-            is_best = False
-            if not best_val_loss or val_loss < best_val_loss:
-                best_val_loss = val_loss
-                is_best = True
-
             if not args.debug:
                 save_checkpoint(args, model, model_config, optimizer, scheduler,
-                                scaler, vocab, epoch, batch, last_iter,
-                                train_step, best_val_loss, is_best,
-                                args.work_dir)
+                                vocab, epoch, batch, last_iter,
+                                train_step, args.work_dir)
 
             log_start_time += time.time() - eval_start_time
 
         if interrupted:
-            logging.info(f'Received SIGTERM, exiting')
+            print_once('Received SIGTERM, exiting', args)
             sys.exit(0)
 
         if is_final_step:
             break
 
-        t3 = time.time()
+    return train_step
 
-    return train_step, best_val_loss
+
+def print_once(txt, args):
+    if args.local_rank == 0:
+        print(txt)
 
 
 def main():
     args = parse_args()
+
+    # Nv speed improvement by 15%, assigning particular CPU threads and link to particular GPUs
     if args.affinity != 'disabled':
         nproc_per_node = torch.cuda.device_count()
         affinity = utils.gpu_affinity.set_affinity(
@@ -801,51 +558,20 @@ def main():
         )
         print(f'{args.local_rank}: thread affinity: {affinity}')
 
-
-    # Initialize device and distributed backend
+    # Initialize distributed backend
     torch.cuda.set_device(args.local_rank)
-    l2_promote()
     device = torch.device('cuda' if args.cuda else 'cpu')
     utils.distributed.init_distributed(args.cuda)
-
-    args.work_dir = utils.exp_utils.build_work_dir_name(args.work_dir,
-                                                        args.dataset,
-                                                        args.append_dataset,
-                                                        args.append_time,
-                                                        )
-
     with utils.distributed.sync_workers() as rank:
         if rank == 0:
             create_exp_dir(args.work_dir,
                            scripts_to_save=['train.py', 'hourglass.py'],
                            debug=args.debug)
 
-    # Setup logging
-    if args.log_all_ranks:
-        log_file = f'train_log_rank_{utils.distributed.get_rank()}.log'
-    else:
-        log_file = args.txtlog_file
-    log_file = os.path.join(args.work_dir, log_file)
-
     if args.debug:
-        logging.info('This run is in DEBUG mode')
-        log_file = os.devnull
+        print_once('This run is in DEBUG mode', args)
 
-    utils.exp_utils.setup_logging(log_all_ranks=args.log_all_ranks,
-                                  filename=log_file,
-                                  )
-    if args.profile:
-        try:
-            pyprof.init(enable_function_stack=True)
-        except NameError:
-            warnings.warn('Called pyprof.init() but pyprof is not available')
-
-    logging.info(args)
-
-    logging.info(f'world size: {utils.distributed.get_world_size()}')
-
-    if not args.no_env:
-        log_env_info()
+    print_once(f'world size: {utils.distributed.get_world_size()}', args)
 
     # Set the random seed manually for reproducibility.
     np.random.seed(args.seed)
@@ -854,29 +580,12 @@ def main():
     ###########################################################################
     # Load data
     ###########################################################################
-    boundary_kwargs = {
-        'move_prob': args.move_prob,
-        'deletion_prob': args.deletion_prob,
-        'insert_prob':args.insert_prob,
-        'clamp_group_sizes':args.clamp_group_sizes,
-        'min_group_length':args.min_group_length,
-        'max_group_length':args.max_group_length,
-        'mean_normal':args.mean_normal,
-        'std_normal':args.std_normal,
-        'boundary_ids':args.boundary_ids,
-        'boundaries_type':args.boundaries_type,
-        'tokenizer_type':args.tokenizer_type,
-        'tokenizer_vocab_size':args.tokenizer_vocab_size,
-        'tokenizer_dropout':args.tokenizer_dropout,
-        'tokenizer_save_dir':args.tokenizer_save_dir,
-        'tokenizer_algorithm':args.tokenizer_algorithm,
-    }
+    boundary_kwargs = get_boundary_config(args)
     corpus = get_lm_corpus(args.data,
                            args.dataset,
                            **boundary_kwargs)
-    ntokens = len(corpus.vocab)
     vocab = corpus.vocab
-    args.n_token = ntokens
+    args.n_token = len(vocab)
 
     eval_tgt_lengths = args.eval_tgt_lengths
     eval_total_lengths = args.eval_total_lengths
@@ -887,12 +596,8 @@ def main():
     va_iters, te_iters = [], []
 
     for eval_tgt_len, eval_total_len in zip(eval_tgt_lengths, eval_total_lengths):
-        if args.mem_len == 0:
-            eval_ext_len = eval_total_len - eval_tgt_len
-        else:
-            assert args.ext_len == 0
-            eval_ext_len = 0
-            
+        eval_ext_len = eval_total_len - eval_tgt_len
+
         va_iter = corpus.get_iterator('valid', args.eval_batch_size,
                                       eval_tgt_len, device,
                                       eval_ext_len, **boundary_kwargs)
@@ -905,9 +610,42 @@ def main():
     ###########################################################################
     # Build the model
     ###########################################################################
-    model_config = gen_model_config(args, vocab) 
+    model_config = gen_model_config(args, vocab)
+    model = MemTransformerLM(**model_config)
+    model.apply(functools.partial(weights_init, args=args))
+    model.word_emb.apply(functools.partial(weights_init, args=args))
+    args.n_all_param = sum([p.nelement() for p in model.parameters()])
 
+    # optimizer
+    if args.optim.lower() == 'sgd':
+        optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                              momentum=args.mom)
+    elif args.optim.lower() == 'adam':
+        optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                               weight_decay=args.weight_decay)
+
+    # scheduler
+    if args.max_step_scheduler:
+        max_step = args.max_step_scheduler
+    else:
+        max_step = args.max_step
+
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, max_step - args.warmup_step, eta_min=args.eta_min)
+
+    model = model.to(device)
+
+    if args.multi_gpu == 'ddp' and torch.distributed.is_initialized():
+        model = DistributedDataParallel(model,
+                                             device_ids=[args.local_rank],
+                                             output_device=args.local_rank,
+                                             broadcast_buffers=False,
+                                             find_unused_parameters=True,
+                                             )
+
+    # Log training and model args
     if rank == 0:
+        # Neptune
         global run
         run = neptune.init('syzymon/hourglass-pytorch')
         run['model_config'] = model_config
@@ -916,160 +654,46 @@ def main():
         run['exp_path'] = os.getenv('EXPERIMENT_PATH')
         run['slurm_jobid'] = os.getenv('SLURM_JOB_ID')
 
-    model = MemTransformerLM(**model_config)
-
     if rank == 0:
         print(model)
+        print('=' * 100)
+        for k, v in args.__dict__.items():
+            print('    - {} : {}'.format(k, v))
+        print('=' * 100)
 
-    model.apply(functools.partial(weights_init, args=args))
-    # ensure embedding init is not overridden by out_layer in case of weight sharing
-    model.word_emb.apply(functools.partial(weights_init, args=args))
-
-    args.n_all_param = sum([p.nelement() for p in model.parameters()])
-    args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
-
-    # optimizer
-    if args.optim.lower() == 'sgd':
-        if args.sample_softmax > 0:
-            raise NotImplementedError
-        else:
-            optimizer = optim.SGD(model.parameters(), lr=args.lr,
-                                  momentum=args.mom)
-            optimizer_sparse = None
-    elif args.optim.lower() == 'adam':
-        if args.sample_softmax > 0:
-            raise NotImplementedError
-        else:
-            optimizer = optim.Adam(model.parameters(), lr=args.lr,
-                                   weight_decay=args.weight_decay)
-            optimizer_sparse = None
-
-    model = model.to(device)
-
-    scaler = None
-    if args.fp16:
-        if args.amp == 'pytorch':
-            scaler = torch.cuda.amp.GradScaler()
-        elif args.amp == 'apex':
-            model, optimizer = amp.initialize(
-                model,
-                optimizer,
-                opt_level=args.apex_amp_opt_level,
-                )
-
-    if args.multi_gpu == 'ddp' and torch.distributed.is_initialized():
-        para_model = DistributedDataParallel(model,
-                                             device_ids=[args.local_rank],
-                                             output_device=args.local_rank,
-                                             broadcast_buffers=False,
-                                             find_unused_parameters=True,
-                                             )
-    elif args.multi_gpu == 'dp':
-        raise NotImplementedError
-    else:
-        para_model = model
-
-    # scheduler
-    if args.scheduler == 'cosine':
-        if args.max_step_scheduler:
-            max_step = args.max_step_scheduler
-        else:
-            max_step = args.max_step
-
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, max_step - args.warmup_step, eta_min=args.eta_min)
-        if args.sample_softmax > 0 and optimizer_sparse is not None:
-            raise NotImplementedError
-        else:
-            scheduler_sparse = None
-    else:
-        raise NotImplementedError
-
-    logging.info('=' * 100)
-    for k, v in args.__dict__.items():
-        logging.info('    - {} : {}'.format(k, v))
-    logging.info('=' * 100)
-    logging.info('#params = {}'.format(args.n_all_param))
-    logging.info('#non emb params = {}'.format(args.n_nonemb_param))
-
-    train_step = 0
-    start_epoch = 1
-    last_batch = 0
-    last_iter = 0
-    best_val_loss = None
-
-    if args.restart:
-        try:
-            checkpoint = load_checkpoint(args.restart)
-            model.load_state_dict(checkpoint['model_state'])
-            optimizer.load_state_dict(checkpoint['optimizer_state'])
-            scheduler.load_state_dict(checkpoint['scheduler_state'])
-            if args.fp16:
-                if args.amp == 'pytorch':
-                    scaler.load_state_dict(checkpoint['amp_state'])
-                elif args.amp == 'apex':
-                    amp.load_state_dict(checkpoint['amp_state'])
-            train_step = checkpoint['train_step']
-            start_epoch = checkpoint['epoch']
-            last_batch = checkpoint['batch']
-            last_iter = checkpoint['last_iter']
-            best_val_loss = checkpoint['best_val_loss']
-
-            if train_step >= args.max_step:
-                logging.info(f'Loaded checkpoint after {train_step} steps, but '
-                             f'this run was scheduled for a total of '
-                             f'{args.max_step} steps, exiting')
-                sys.exit(1)
-
-            model.apply(functools.partial(update_dropout, args=args))
-            model.apply(functools.partial(update_dropatt, args=args))
-        except FileNotFoundError:
-            logging.info(f'Could not load checkpoint from {args.restart}, '
-                         f'starting training from random init')
-
-    meters = {}
-    warmup = args.mem_len // args.tgt_len + 2
-    meters['train_throughput'] = AverageMeter(warmup=warmup)
     ###########################################################################
     # Train
     ###########################################################################
-    # Loop over epochs.
-    # At any point you can hit Ctrl + C to break out of training early.
-    start_time = time.time()
-    with torch.autograd.profiler.emit_nvtx(enabled=args.profile):
-        with TimeoutHandler() as timeout_handler:
-            try:
-                for epoch in itertools.count(start=start_epoch):
-                    if args.roll:
-                        tr_iter.roll(seed=args.seed + epoch)
-                    train_step, best_val_loss = train(
-                        tr_iter, va_iters, model, para_model, model_config,
-                        optimizer, optimizer_sparse, scheduler,
-                        scheduler_sparse, scaler, vocab, epoch, last_batch,
-                        last_iter, train_step, best_val_loss, meters,
-                        timeout_handler, device, args
-                        )
+    train_step = 0
+    start_epoch = 1
+    last_iter = 0
 
-                    last_batch = 0
-                    last_iter = 0
+    with TimeoutHandler() as timeout_handler:
+        # At any point you can hit Ctrl + C to break out of training early.
+        try:
+            for epoch in itertools.count(start=start_epoch):
+                if args.roll:
+                    tr_iter.roll(seed=args.seed + epoch)
+                train_step = train(
+                    tr_iter, va_iters, model, model_config,
+                    optimizer, scheduler,
+                    vocab, epoch,
+                    last_iter, train_step,
+                    timeout_handler, args
+                    )
 
-                    if train_step == args.max_step:
-                        logging.info('-' * 100)
-                        logging.info('End of training')
-                        break
-            except KeyboardInterrupt:
-                logging.info('-' * 100)
-                logging.info('Exiting from training early')
-    elapsed = time.time() - start_time
+                last_iter = 0
+
+                if train_step == args.max_step:
+                    print('End of training')
+                    break
+        except KeyboardInterrupt:
+            print('Exiting from training early')
 
     ###########################################################################
     # Test
     ###########################################################################
-    summary = {}
-    if not args.debug and not args.no_eval:
-        # Run on test data.
-        test_start_time = time.time()
-
+    if not args.debug:
         test_losses = []
 
         for i, (eval_tgt_len, eval_total_len) in enumerate(zip(eval_tgt_lengths, eval_total_lengths)):
@@ -1079,50 +703,13 @@ def main():
             if run:
                 run[f'test/loss_tgt{eval_tgt_len}_total{eval_total_len}'].log(test_loss, step=train_step)
 
-        test_elapsed = time.time() - test_start_time
-
         test_loss = test_losses[0]
 
-        logging.info('=' * 100)
-        if args.dataset in ['enwik8', 'text8']:
-            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test bpc {:9.5f}'.format(
-                test_elapsed, test_loss, test_loss / math.log(2)))
-        else:
-            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test ppl {:9.3f}'.format(
-                test_elapsed, test_loss, math.exp(test_loss)))
+        print_once('| End of training | test loss {:5.2f} | test bpc {:9.5f}'.format(
+            test_loss, test_loss / math.log(2)), args)
         if run:
             run['test_loss'].log(test_loss, step=train_step)
 
-        logging.info('=' * 100)
-
-        summary.update({
-            'test_elapsed': test_elapsed,
-            'test_loss': test_loss,
-            })
-
-        if args.dataset in ['enwik8', 'text8']:
-            summary['test_bits_per_character'] = test_loss / math.log(2)
-        else:
-            summary['test_perplexity'] = math.exp(test_loss)
-
-    logging.info(f'Training time: {(elapsed / 60):.2f} minutes')
-    logging.info(f'Training throughput: {meters["train_throughput"].avg:.2f} tok/s')
-
-    if best_val_loss:
-        val_perplexity = math.exp(best_val_loss)
-    else:
-        val_perplexity = None
-
-    summary.update({
-        'train_throughput': meters['train_throughput'].avg,
-        'train_elapsed': elapsed / 60,
-        'valid_loss': best_val_loss,
-        'valid_perplexity': val_perplexity,
-        })
-
 
 if __name__ == "__main__":
-    if 'apex' in sys.modules:
-        amp.register_half_function(torch, 'einsum')
-
     main()

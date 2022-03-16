@@ -6,7 +6,6 @@ text8: &text8
 train: &train
    <<: *text8
    cuda: true
-   n_layer: 0
    d_model: 512
    n_head: 8
    d_head: 64
@@ -18,7 +17,6 @@ train: &train
    warmup_step: 0
    max_step: 200000
    tgt_len: 2048
-   mem_len: 0
    eval_tgt_lengths: [512]
    eval_total_lengths: [2048]
    batch_size: 8
@@ -31,7 +29,8 @@ train: &train
    funnel_config: "[2, (8, 1), 2]"
    funnel_resample: custom
    activation_function: relu
-   boundaries_type: 'tokenizer'
+   boundaries_type: 'ids'
+   boundary_ids: '["_"]'
    tokenizer_type: 'unigram'
    tokenizer_vocab_size: 5000
    tokenizer_dropout: 0.0

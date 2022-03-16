@@ -195,7 +195,7 @@ class TokenizersData():
 
 class AutoregressiveTokeniser():
     def __init__(self, corpus_filepath, save_dir, tokenizer_type, vocab_size,
-                 dropout, pretokenization, algorithm):
+                 dropout, algorithm, pretokenization='metaspace'):
         self.corpus_filepath = corpus_filepath
         self.save_dir = save_dir
         self.algorithm = algorithm
@@ -461,7 +461,7 @@ if __name__ == "__main__":
     dataset = load_corpus_and_split(args.corpus_filepath, 1)[0]
     auto_tokenizer = AutoregressiveTokeniser(args.corpus_filepath, args.save_dir,
                                         args.tokenizer_type, args.vocab_size,
-                                        args.dropout, args.pretokenization, args.algorithm)
+                                        args.dropout, args.algorithm, args.pretokenization)
     subpart = 500000
     raw_boundaries = torch.load('raw_boundaries.pt')
     autoreg_boundaries = auto_tokenizer.get_boundaries(dataset[:subpart],
