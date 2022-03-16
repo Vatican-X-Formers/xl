@@ -26,8 +26,9 @@ train: &train
    text_generation_interval: 25000
    batch_chunk: 1
    pre_lnorm: false
-   funnel_config: "[2, (8, 1), 2]"
-   funnel_resample: custom
+   funnel_config: "[2, (8,) , 2]"
+   downsample_mode: 'naive'
+   upsample_mode: 'naive'
    activation_function: relu
    boundaries_type: 'ids'
    boundary_ids: '["_"]'

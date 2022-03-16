@@ -23,7 +23,7 @@ from utils.exp_utils import TimeoutHandler
 from utils.exp_utils import create_exp_dir
 import torch.nn.functional as F
 import pdb
-
+from utils.exp_utils import l2_promote
 run = None
 np.set_printoptions(suppress=True)
 
@@ -97,9 +97,10 @@ def parse_args():
                        help='Parameters initialized by N(0, init_std)')
     model.add_argument('--proj_init_std', type=float, default=0.01,
                        help='Parameters initialized by N(0, init_std)')
-    model.add_argument('--funnel_config', type=str, default="[3, (8, 3) ,3]",
-                       help="[pre_funnel_vanilla_layers, (funnel_layers, shorten_factor), post_funnel_vanilla_layers]")
-    model.add_argument('--funnel_resample', type=str, default='naive', help='')
+    model.add_argument('--funnel_config', type=str, default="[3, (8,) ,3]",
+                       help="[pre_funnel_vanilla_layers, (funnel_layers, ), post_funnel_vanilla_layers]")
+    model.add_argument('--downsample_mode', type=str, default='naive', help='')
+    model.add_argument('--upsample_mode', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
     model.add_argument('--boundary_predictor', type=str, default='none', help='')
@@ -330,7 +331,8 @@ def gen_model_config(args, vocab):
         'same_length': args.same_length,
         'clamp_len': args.clamp_len,
         'funnel_config': args.funnel_config,
-        'funnel_resample': args.funnel_resample,
+        'downsample_mode': args.downsample_mode,
+        'upsample_mode': args.upsample_mode,
         'activation_function': args.activation_function,
         'gather_stats': args.gather_stats,
         'boundary_predictor': args.boundary_predictor,
@@ -560,6 +562,7 @@ def main():
 
     # Initialize distributed backend
     torch.cuda.set_device(args.local_rank)
+    l2_promote()
     device = torch.device('cuda' if args.cuda else 'cpu')
     utils.distributed.init_distributed(args.cuda)
     with utils.distributed.sync_workers() as rank:

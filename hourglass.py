@@ -190,17 +190,13 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
 
 class Upsampler(nn.Module):
-    def __init__(self, embedding_dim, upsample_factor, mode='linear'):
+    def __init__(self, embedding_dim, mode):
         super().__init__()
-        self.upsample_factor = upsample_factor
         self.mode = mode
         self.ln = nn.LayerNorm(embedding_dim)
 
-    def forward(self, x, residual, upsampling_mask=None):
+    def forward(self, x, residual, upsampling_mask):
         if self.mode == 'naive':
-            x = x.repeat_interleave(self.upsample_factor, dim=0)
-        elif self.mode == 'custom':
-            assert upsampling_mask is not None
             # T x B x C
             x = x.transpose(0, 1)
             x = torch.gather(
@@ -209,55 +205,30 @@ class Upsampler(nn.Module):
             x = x.transpose(0, 1)
             assert x.size() == residual.size()
 
+        # The upsampled vector can be longer from just before shortening
         assert x.size(0) >= residual.size(0)
-        # The upsampled vector can be longer than tgt_len, the len from just before shortening
         x = self.ln(x[:residual.size(0)]) + residual
 
         return x
 
 
 class Downsampler(nn.Module):
-    def __init__(self, embedding_dim, downsample_factor, mode='linear'):
+    def __init__(self, embedding_dim, mode):
         super().__init__()
         self.mode = mode
-        self.downsample_factor = downsample_factor
         if mode == 'naive':
-            self.downsample_layer = nn.AvgPool1d(
-                kernel_size = downsample_factor,
-                stride = downsample_factor
-            )
-        elif mode == 'custom':
-            assert self.downsample_factor == 1, 'Just a special requirement of using custom mode'
-
-        if mode in ['naive']:
-            self.leftmost_group = nn.Parameter(
-                torch.Tensor(self.downsample_factor - 1, 1, embedding_dim).zero_()
-            )
-        else:
+            # In fixed group size shortening we actually don't need to use that
+            # In variable group size approach we might wanna predict boundaries
+            # based on data. In such a situaiton we can add a group
+            # representation to indeces which are >= max(indices_in_the_group).
+            # Therefore probably most of the time to the first group we might
+            # need to add special trained vector and not the one gathered from
+            # data to prevent autoregressive property
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
 
-    def forward(self, x, downsampling_mask=None):
+    def forward(self, x, downsampling_mask):
         # Input is of shape T x B x C
-        sf = self.downsample_factor
-
-        if self.mode == 'linear' or self.mode == 'naive':
-            x = torch.cat([self.leftmost_group.repeat(1, x.size(1) ,1), x], dim = 0)
-
-        if x.size(0) % sf > 0:
-            # Hack to prevent destroying the tensor when T is divisible by sf
-            x = x[:-(x.size(0) % sf)]
-
-        assert x.size(0) % sf == 0, \
-            'tgt_len not divisible by sf'
-
-        # T x B x C
         if self.mode == 'naive':
-            # T x B x C -> B x T x C -> B x C x T
-            x = x.transpose(0, 1).transpose(1, 2)
-            x = self.downsample_layer(x)
-            x = x.transpose(1, 2).transpose(0, 1)
-        elif self.mode == 'custom':
-            assert downsampling_mask is not None
             x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
             x = torch.cat(
                 [self.leftmost_group.repeat(1, x.size(1), 1), x], dim=0
@@ -306,8 +277,9 @@ class BoundaryPredictor(nn.Module):
 class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_head, d_model, d_head, d_inner,
                  dropout, dropatt, pre_lnorm=False, same_length=False,
-                 clamp_len=-1, funnel_config="[3, (1, 2) ,3]",
-                 funnel_resample='naive', activation_function='relu',
+                 clamp_len=-1, funnel_config="[3, (1, ) ,3]",
+                 downsample_mode='naive', upsample_mode='naive',
+                 activation_function='relu',
                  gather_stats=[], boundary_predictor='none',
                  ):
         super(MemTransformerLM, self).__init__()
@@ -334,38 +306,30 @@ class MemTransformerLM(nn.Module):
         def create_decoder_layers(n_layers):
             layers = nn.ModuleList([
                 RelPartialLearnableDecoderLayer(
-                        n_head, d_model, d_head, d_inner, dropout,
-                        dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        activation_function=activation_function)
+                    n_head, d_model, d_head, d_inner, dropout,
+                    dropatt=dropatt, pre_lnorm=pre_lnorm,
+                    activation_function=activation_function)
                 for _ in range(n_layers)
             ])
 
             return layers
 
-        pre_layers, (funnel_layers, shorten_factor), post_layers = eval(funnel_config)
-        if post_layers == 0 and funnel_layers == 0 and shorten_factor == 1:
-            print('You are not using funnel')
+        pre_layers, (funnel_layers, ), post_layers = eval(funnel_config)
+        if post_layers == 0 and funnel_layers == 0:
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers)
             ])
         else:
-            print(f'You are using funnel in config {funnel_config}')
-            assert funnel_layers > 0
-            assert post_layers == pre_layers, 'Our model is symmetric'
-            assert shorten_factor > 1 or funnel_resample == 'custom'
-            self.funnel_mode = funnel_resample
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
                 Downsampler(
                     embedding_dim=d_model,
-                    downsample_factor=shorten_factor,
-                    mode=funnel_resample,
+                    mode=downsample_mode,
                 ),
                 create_decoder_layers(funnel_layers),
                 Upsampler(
                     embedding_dim=d_model,
-                    upsample_factor=shorten_factor,
-                    mode=funnel_resample
+                    mode=upsample_mode,
                 ),
                 create_decoder_layers(post_layers),
             ])
@@ -382,7 +346,7 @@ class MemTransformerLM(nn.Module):
         # As we take maximum shortened_length from the batch - take care
         self.gather_stats = gather_stats
 
-    def _forward(self, core_input, layers=None, clamp_len=0):
+    def _forward(self, core_input, layers=None):
         # Core_input is of size (T x B x C)
         qlen, _, _ = core_input.size()
         klen = qlen
@@ -408,8 +372,8 @@ class MemTransformerLM(nn.Module):
 
         # This is used only during inference, as during inference we can use
         # longer sequences than during training as we don't have to store activations.
-        if clamp_len > 0:
-            pos_seq.clamp_(max=clamp_len)
+        if self.clamp_len > 0:
+            pos_seq.clamp_(max=self.clamp_len)
 
         pos_emb = self.pos_emb(pos_seq)
         pos_emb = self.drop(pos_emb)
@@ -457,19 +421,16 @@ class MemTransformerLM(nn.Module):
         # tgt_len = target.size(0)
         tgt_len = target.size(0) if target is not None else data.size(0)
 
-        # Create masks if custom downsampling/upsampling
-        if getattr(self, 'funnel_mode', None) == 'custom':
-            downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
-            if 'shortened_length' in self.gather_stats:
-                stats['shortened_length'] = downsampling_mask.size(2)
-        else:
-            downsampling_mask, upsampling_mask = None, None
+        # Create masks out of boundary vector
+        downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+        if 'shortened_length' in self.gather_stats:
+            stats['shortened_length'] = downsampling_mask.size(2)
 
         # Token_ids to vector embeddings
-        word_emb = self.word_emb(data) # T x B x C
+        # T x B x C
+        word_emb = self.word_emb(data)
         hidden = self.drop(word_emb)
 
-        current_sf = 1 # We keep that to regulate clamp_len in shortened layers
         mems_index = 0
         loss_boundaries = torch.tensor(0, dtype=data.dtype, device=data.device)
         residual = None
@@ -480,7 +441,6 @@ class MemTransformerLM(nn.Module):
             if isinstance(layers, Upsampler):
                 # The residual come from just before shortening
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
-                current_sf = current_sf // layers.upsample_factor
             elif isinstance(layers, Downsampler):
                 if special:
                     hidden = hidden.clone().detach()
@@ -498,12 +458,10 @@ class MemTransformerLM(nn.Module):
 
                 residual = hidden
                 hidden = layers(hidden, downsampling_mask=downsampling_mask)
-                current_sf *= layers.downsample_factor
             else:
                 hidden = self._forward(
                     hidden,
                     layers=layers,
-                    clamp_len=self.clamp_len // current_sf,
                 )
                 if self.pre_lnorm:
                     hidden = self.layer_norms[mems_index](hidden)
