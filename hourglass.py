@@ -264,7 +264,7 @@ def sigmoid_focal_loss(
 
 
 class BoundaryPredictor(nn.Module):
-    def __init__(self, mode, d_model, weight, d_inner=2048, dropout=0.1, threshold=0.5):
+    def __init__(self, mode, d_model, weight, d_inner=2048, dropout=0.0, threshold=0.5):
         # For unigram 5k negatives/positives = 2.65
         super().__init__()
         self.mode = mode
