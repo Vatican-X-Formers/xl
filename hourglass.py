@@ -240,7 +240,7 @@ class Downsampler(nn.Module):
 def sigmoid_focal_loss(
     inputs: torch.Tensor,
     targets: torch.Tensor,
-    alpha: float = 0.25,
+    alpha: float = -1,
     gamma: float = 2,
     reduction: str = "mean",
 ) -> torch.Tensor:
