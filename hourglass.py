@@ -255,6 +255,15 @@ class BoundaryPredictor(nn.Module):
                 nn.Linear(d_inner, 1),
             )
             self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+        elif mode == 'sample':
+            self.boundary_predictor = nn.Sequential(
+                nn.Linear(d_model, d_inner),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(d_inner, 1),
+            )
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float(),
+                                             reduction='none')
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
@@ -264,17 +273,30 @@ class BoundaryPredictor(nn.Module):
             loss = self.loss(preds, boundaries_gt.float())
 
             preds = torch.sigmoid(preds) >= self.threshold
+        elif self.mode in ['sample']:
+            preds = self.boundary_predictor(hidden).squeeze(-1)
+            loss = self.loss(preds, boundaries_gt.float())
+            preds = torch.sigmoid(preds) >= self.threshold
 
-            TP = ((preds == boundaries_gt) & preds).sum().item()
-            FP = ((preds != boundaries_gt) & preds).sum().item()
-            FN = ((preds != boundaries_gt) & (~preds)).sum().item()
+            positive_loss = loss[boundaries_gt].mean()
 
-            acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
-            if TP == 0:
-                precision, recall = 0, 0
-            else:
-                precision = TP / (TP + FP)
-                recall = TP / (TP + FN)
+            positives = boundaries_gt.sum()
+            a, b = (~boundaries_gt).nonzero(as_tuple=True)
+            perm = torch.randperm(a.size(0), device=a.device)[:positives]
+            a, b = a[perm], b[perm]
+            negative_loss = loss[a, b].mean()
+            loss = negative_loss + positive_loss
+
+        TP = ((preds == boundaries_gt) & preds).sum().item()
+        FP = ((preds != boundaries_gt) & preds).sum().item()
+        FN = ((preds != boundaries_gt) & (~preds)).sum().item()
+
+        acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
+        if TP == 0:
+            precision, recall = 0, 0
+        else:
+            precision = TP / (TP + FP)
+            recall = TP / (TP + FN)
 
         return preds, loss, acc, precision, recall, preds.sum(0).max().item()
 
