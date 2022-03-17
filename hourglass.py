@@ -245,8 +245,8 @@ class BoundaryPredictor(nn.Module):
 
         if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
-            # self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([1, 1.5]).float())
-            self.loss = nn.BCEWithLogitsLoss()
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([2.65]).float())
+            # self.loss = nn.BCEWithLogitsLoss()
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
@@ -268,7 +268,7 @@ class BoundaryPredictor(nn.Module):
                 precision = TP / (TP + FP)
                 recall = TP / (TP + FN)
 
-        return preds, loss, acc, precision, recall
+        return preds, loss, acc, precision, recall, preds.sum(0).max().item()
 
 
 class MemTransformerLM(nn.Module):
@@ -461,11 +461,12 @@ class MemTransformerLM(nn.Module):
                     hidden,
                     layers=layers,
                 )
-                _, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+                _, loss_boundaries, acc_boundaries, precision, recall, shortened_len = self.boundary_predictor(hidden, boundaries)
                 stats['acc_boundaries'] = acc_boundaries
                 stats['loss_boundaries'] = loss_boundaries.item()
                 stats['precision'] = precision
                 stats['recall'] = recall
+                stats['bp_sl'] = shortened_len
                 return loss_boundaries, stats, 0
 
                 import sys
