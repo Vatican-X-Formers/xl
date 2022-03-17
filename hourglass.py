@@ -339,7 +339,7 @@ class MemTransformerLM(nn.Module):
                 ),
                 create_decoder_layers(post_layers),
             ])
-            self.boundary_predictor = BoundaryPredictor(mode=boundary_predictor, d_model=d_model)
+            self.boundary_predictor = BoundaryPredictor(mode=bp_mode, d_model=d_model)
 
         # self.final_cast = nn.Linear(d_model, n_token)
         # self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -469,7 +469,8 @@ class MemTransformerLM(nn.Module):
                     hidden,
                     layers=layers,
                 )
-                _, loss_boundaries, acc_boundaries, precision, recall, shortened_len = self.boundary_predictor(hidden, boundaries)
+                _, loss_boundaries, acc_boundaries, precision, recall, \
+                    shortened_len = self.boundary_predictor(hidden, boundaries & (~(data == 0)))
                 stats['acc_boundaries'] = acc_boundaries
                 stats['loss_boundaries'] = loss_boundaries.item()
                 stats['precision'] = precision
