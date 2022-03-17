@@ -103,7 +103,8 @@ def parse_args():
     model.add_argument('--upsample_mode', type=str, default='naive', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
-    model.add_argument('--boundary_predictor', type=str, default='none', help='')
+    model.add_argument('--bp_mode', type=str, default='none')
+    model.add_argument('--bp_weight', type=float, default=1)
 
     boundaries = parser.add_argument_group('boundary creator')
     boundaries.add_argument('--move_prob', type=float, default=0.0)
@@ -337,7 +338,8 @@ def gen_model_config(args, vocab):
         'upsample_mode': args.upsample_mode,
         'activation_function': args.activation_function,
         'gather_stats': args.gather_stats,
-        'boundary_predictor': args.boundary_predictor,
+        'bp_mode': args.bp_mode,
+        'bp_weight': args.bp_weight,
         }
 
     return model_config

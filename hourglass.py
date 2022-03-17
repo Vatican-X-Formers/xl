@@ -238,15 +238,23 @@ class Downsampler(nn.Module):
 
 
 class BoundaryPredictor(nn.Module):
-    def __init__(self, mode, d_model, threshold=0.5):
+    def __init__(self, mode, d_model, weight, d_inner=2048, dropout=0.1, threshold=0.5):
+        # For unigram 5k negatives/positives = 2.65
         super().__init__()
         self.mode = mode
         self.threshold = threshold
 
         if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
-            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([2.65]).float())
-            # self.loss = nn.BCEWithLogitsLoss()
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+        elif mode == 'nonlinearity':
+            self.boundary_predictor = nn.Sequential(
+                nn.Linear(d_model, d_inner),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(d_inner, 1),
+            )
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
@@ -277,7 +285,7 @@ class MemTransformerLM(nn.Module):
                  clamp_len=-1, funnel_config="[3, (1, ) ,3]",
                  downsample_mode='naive', upsample_mode='naive',
                  activation_function='relu',
-                 gather_stats=[], boundary_predictor='none',
+                 gather_stats=[], bp_mode='none', bp_weight=1,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -316,7 +324,7 @@ class MemTransformerLM(nn.Module):
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers)
             ])
-            self.boundary_predictor = BoundaryPredictor(mode=boundary_predictor, d_model=d_model)
+            self.boundary_predictor = BoundaryPredictor(mode=bp_mode, d_model=d_model, weight=bp_weight)
         else:
             self.layers = nn.ModuleList([
                 create_decoder_layers(pre_layers),
