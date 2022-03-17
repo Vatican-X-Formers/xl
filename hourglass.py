@@ -322,7 +322,6 @@ class BoundaryPredictor(nn.Module):
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = sigmoid_focal_loss(preds, boundaries_gt.float())
             preds = torch.sigmoid(preds) >= self.threshold
-            pdb.set_trace()
 
         TP = ((preds == boundaries_gt) & preds).sum().item()
         FP = ((preds != boundaries_gt) & preds).sum().item()
