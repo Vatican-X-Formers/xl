@@ -529,7 +529,7 @@ class MemTransformerLM(nn.Module):
                     layers=layers,
                 )
                 _, loss_boundaries, acc_boundaries, precision, recall, \
-                    shortened_len = self.boundary_predictor(hidden, boundaries & (~(data == 0)))
+                    shortened_len = self.boundary_predictor(hidden, boundaries)
                 stats['acc_boundaries'] = acc_boundaries
                 stats['loss_boundaries'] = loss_boundaries.item()
                 stats['precision'] = precision
