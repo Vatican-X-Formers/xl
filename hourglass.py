@@ -259,7 +259,7 @@ class BoundaryPredictor(nn.Module):
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
-        if self.mode == ['linear', 'nonlinearity']:
+        if self.mode in ['linear', 'nonlinearity']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = self.loss(preds, boundaries_gt.float())
 
