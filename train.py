@@ -51,12 +51,8 @@ def parse_args():
     general = parser.add_argument_group('general setup')
     general.add_argument('--work_dir', default='LM-TFM', type=str,
                          help='Directory for the results')
-    general.add_argument('--cuda', action='store_true',
-                         help='Run training on a GPU using CUDA')
     general.add_argument('--debug', action='store_true',
                          help='Run in debug mode (do not create exp dir)')
-    general.add_argument('--log_interval', type=int, default=10,
-                         help='Report interval')
     general.add_argument('--affinity', type=str,
                          default='socket_unique_interleaved',
                          help='type of CPU affinity')
@@ -127,22 +123,20 @@ def parse_args():
     opt.add_argument('--optim', default='adam', type=str,
                      choices=['adam', 'sgd', 'adagrad', 'lamb', 'jitlamb'],
                      help='Optimizer to use')
-    opt.add_argument('--lr', type=float, default=0.00025,
+    opt.add_argument('--lr', type=float,
                      help='Initial learning rate')
     opt.add_argument('--mom', type=float, default=0.0,
                      help='Momentum for sgd')
     opt.add_argument('--scheduler', default='cosine', type=str,
                      choices=['cosine', 'inv_sqrt', 'dev_perf', 'constant'],
                      help='LR scheduler to use')
-    opt.add_argument('--max_step_scheduler', type=int, default=None,
-                     help='Max number of training steps for LR scheduler')
-    opt.add_argument('--warmup_step', type=int, default=1000,
+    opt.add_argument('--warmup_step', type=int,
                      help='Number of iterations for LR warmup')
-    opt.add_argument('--clip', type=float, default=0.25,
+    opt.add_argument('--clip', type=float,
                      help='Gradient clipping')
-    opt.add_argument('--weight_decay', type=float, default=0.0,
+    opt.add_argument('--weight_decay', type=float,
                      help='Weight decay for adam|lamb')
-    opt.add_argument('--eta_min', type=float, default=0.000,
+    opt.add_argument('--eta_min', type=float, default=0.0,
                      help='Min learning rate for cosine scheduler')
 
     training = parser.add_argument_group('training setup')
@@ -166,6 +160,10 @@ def parse_args():
                           help='Use multiple GPU')
     training.add_argument('--same_length', action='store_true',
                           help='Use the same attn length for all tokens')
+    training.add_argument('--cuda', action='store_true',
+                         help='Run training on a GPU using CUDA')
+    training.add_argument('--log_interval', type=int, default=10,
+                         help='Report interval')
 
     val = parser.add_argument_group('validation setup')
     val.add_argument('--eval_tgt_lengths', nargs="+")
@@ -646,14 +644,8 @@ def main():
         optimizer = optim.Adam(model.parameters(), lr=args.lr,
                                weight_decay=args.weight_decay)
 
-    # scheduler
-    if args.max_step_scheduler:
-        max_step = args.max_step_scheduler
-    else:
-        max_step = args.max_step
-
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, max_step - args.warmup_step, eta_min=args.eta_min)
+        optimizer, args.max_step - args.warmup_step, eta_min=args.eta_min)
 
     model = model.to(device)
 
@@ -710,6 +702,7 @@ def main():
                     print('End of training')
                     break
         except KeyboardInterrupt:
+            sys.exit()
             print('Exiting from training early')
 
     ###########################################################################

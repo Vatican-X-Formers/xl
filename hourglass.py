@@ -269,11 +269,12 @@ class BoundaryPredictor(nn.Module):
         super().__init__()
         self.mode = mode
         self.threshold = threshold
+        self.weight = weight
 
         if mode == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
             self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
-        elif mode == 'nonlinearity':
+        elif mode in ['nonlinearity']:
             self.boundary_predictor = nn.Sequential(
                 nn.Linear(d_model, d_inner),
                 nn.ReLU(inplace=True),
@@ -281,7 +282,7 @@ class BoundaryPredictor(nn.Module):
                 nn.Linear(d_inner, 1),
             )
             self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
-        elif mode == 'sample':
+        elif mode in ['sample', 'weight_negative']:
             self.boundary_predictor = nn.Sequential(
                 nn.Linear(d_model, d_inner),
                 nn.ReLU(inplace=True),
@@ -323,6 +324,15 @@ class BoundaryPredictor(nn.Module):
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = sigmoid_focal_loss(preds, boundaries_gt.float())
             preds = torch.sigmoid(preds) >= self.threshold
+        elif self.mode in ['weight_negative']:
+            preds = self.boundary_predictor(hidden).squeeze(-1)
+            loss = self.loss(preds, boundaries_gt.float())
+            preds = torch.sigmoid(preds) >= self.threshold
+
+            positive_loss = loss[boundaries_gt].mean()
+            negative_loss = loss[~boundaries_gt].mean()
+            ratio = boundaries_gt.sum().item() / (~boundaries_gt).sum().item()
+            loss = ratio * negative_loss + positive_loss
 
         TP = ((preds == boundaries_gt) & preds).sum().item()
         FP = ((preds != boundaries_gt) & preds).sum().item()
