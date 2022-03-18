@@ -1,43 +1,63 @@
-# Base
 text8: &text8
    dataset: text8
    data: data/text8/
 
-train: &train
-   <<: *text8
-   cuda: true
+model: &model
    d_model: 512
    n_head: 8
    d_head: 64
    d_inner: 2048
    dropout: 0.1
    dropatt: 0.0
-   optim: adam
-   lr: 0.00025
-   warmup_step: 0
-   max_step: 50000
-   tgt_len: 2048
-   eval_tgt_lengths: [512]
-   eval_total_lengths: [2048]
-   batch_size: 8
-   multi_gpu: ddp
-   log_interval: 100
-   eval_interval: 5000
-   text_generation_interval: 25000
-   batch_chunk: 1
    pre_lnorm: false
-   funnel_config: "[4, (0,), 0]"
+   funnel_config: "[2, (8,), 2]"
+   activation_function: relu
    downsample_mode: 'naive'
    upsample_mode: 'naive'
-   activation_function: relu
+
+bp: &bp
+   bp_mode: 'equalize'
+   bp_capacity: 'nonlinear'
+   bp_weight: 1.0
+   bp_switch_step: 500
+
+boundaries: &boundaries
    boundaries_type: 'tokenizer'
    boundary_ids: '["_"]'
    tokenizer_type: 'unigram'
    tokenizer_vocab_size: 5000
    tokenizer_dropout: 0.0
    tokenizer_algorithm: 'approachna'
-   boundary_predictor: 'linear'
+
+eval: &eval
+   eval_interval: 10000
+   eval_tgt_lengths: [512]
+   eval_total_lengths: [2048]
+   text_generation_interval: 25000
+
+optim: &optim
+   optim: adam
+   scheduler: cosine
+   lr: 0.00025
+   warmup_step: 0
+   clip: 0.25
+   weight_decay: 0
+
+train: &train
+   multi_gpu: ddp
+   cuda: true
+   max_step: 200000
+   tgt_len: 2048
+   batch_size: 8
+   batch_chunk: 1
+   log_interval: 100
 
 default:
    train:
+      <<: *text8
+      <<: *model
+      <<: *bp
+      <<: *boundaries
+      <<: *eval
+      <<: *optim
       <<: *train

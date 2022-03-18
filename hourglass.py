@@ -238,37 +238,76 @@ class Downsampler(nn.Module):
 
 
 class BoundaryPredictor(nn.Module):
-    def __init__(self, mode, d_model, threshold=0.5):
+    def __init__(self, mode, capacity, d_model, weight, d_inner=2048, dropout=0.0, threshold=0.5):
         super().__init__()
         self.mode = mode
         self.threshold = threshold
+        self.weight = weight
 
-        if mode == 'linear':
+        if capacity == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
-            # self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([1, 1.5]).float())
-            self.loss = nn.BCEWithLogitsLoss()
+        elif capacity == 'nonlinear':
+            self.boundary_predictor = nn.Sequential(
+                nn.Linear(d_model, d_inner),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(d_inner, 1),
+            )
+        elif capacity == 'transformer':
+            self.boundary_predictor = nn.Sequential(
+                RelPartialLearnableDecoderLayer(
+                    n_head=8, d_model=512, d_head=64, d_inner=2048, dropout=0.1,
+                    dropatt=0.0, pre_lnorm=False,
+                    activation_function='relu'),
+                nn.Linear(d_model, 1),
+            )
+        elif capacity == 'conv':
+            self.boundary_predictor = nn.Sequential(
+            )
+
+        if mode == 'nothing':
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+        elif mode in ['focal', 'equalize']:
+            self.loss = nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
-        if self.mode == 'linear':
+        if self.mode in ['nothing']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = self.loss(preds, boundaries_gt.float())
 
             preds = torch.sigmoid(preds) >= self.threshold
+        elif self.mode in ['focal']:
+            preds = self.boundary_predictor(hidden).squeeze(-1)
+            loss = self.loss(preds, boundaries_gt.float())
+            preds = torch.sigmoid(preds)
 
-            TP = ((preds == boundaries_gt) & preds).sum().item()
-            FP = ((preds != boundaries_gt) & preds).sum().item()
-            FN = ((preds != boundaries_gt) & (~preds)).sum().item()
+            p_t = preds * boundaries_gt.float() + (1 - preds) * (1 - boundaries_gt.float())
+            loss = loss * ((1 - p_t))
 
-            acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
-            if TP == 0:
-                precision, recall = 0, 0
-            else:
-                precision = TP / (TP + FP)
-                recall = TP / (TP + FN)
+            preds = preds >= self.threshold
+        elif self.mode in ['equalize']:
+            preds = self.boundary_predictor(hidden).squeeze(-1)
+            loss = self.loss(preds, boundaries_gt.float())
+            preds = torch.sigmoid(preds) >= self.threshold
 
-        return preds, loss, acc, precision, recall
+            positive_loss = loss[boundaries_gt].mean()
+            negative_loss = loss[~boundaries_gt].mean()
+            loss = negative_loss + positive_loss * self.weight
+
+        TP = ((preds == boundaries_gt) & preds).sum().item()
+        FP = ((preds != boundaries_gt) & preds).sum().item()
+        FN = ((preds != boundaries_gt) & (~preds)).sum().item()
+
+        acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
+        if TP == 0:
+            precision, recall = 0, 0
+        else:
+            precision = TP / (TP + FP)
+            recall = TP / (TP + FN)
+
+        return preds, loss, acc, precision, recall, preds.sum(0).max().item()
 
 
 class MemTransformerLM(nn.Module):
@@ -277,7 +316,8 @@ class MemTransformerLM(nn.Module):
                  clamp_len=-1, funnel_config="[3, (1, ) ,3]",
                  downsample_mode='naive', upsample_mode='naive',
                  activation_function='relu',
-                 gather_stats=[], boundary_predictor='none',
+                 gather_stats=[], bp_mode='none', bp_capacity='none',
+                 bp_weight=0.0, bp_switch_step=0,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -330,7 +370,11 @@ class MemTransformerLM(nn.Module):
                 ),
                 create_decoder_layers(post_layers),
             ])
-            self.boundary_predictor = BoundaryPredictor(mode=boundary_predictor, d_model=d_model)
+            self.boundary_predictor = BoundaryPredictor(mode=bp_mode,
+                                                        capacity=bp_capacity,
+                                                        d_model=d_model,
+                                                        weight=bp_weight)
+            self.bp_switch_step = bp_switch_step
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -419,9 +463,10 @@ class MemTransformerLM(nn.Module):
         tgt_len = target.size(0) if target is not None else data.size(0)
 
         # Create masks out of boundary vector
-        downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
-        if 'shortened_length' in self.gather_stats:
-            stats['shortened_length'] = downsampling_mask.size(2)
+        if step < self.bp_switch_step:
+            downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+            if 'shortened_length' in self.gather_stats:
+                stats['shortened_length'] = downsampling_mask.size(2)
 
         # Token_ids to vector embeddings
         # T x B x C
@@ -439,15 +484,15 @@ class MemTransformerLM(nn.Module):
                 # The residual come from just before shortening
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
             elif isinstance(layers, Downsampler):
-                if self.boundary_predictor.mode == 'linear':
-                    boundaries_preds, loss_boundaries, acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
+                if self.boundary_predictor.mode != '':
+                    boundaries_preds, loss_boundaries, acc_boundaries, \
+                        precision, recall, _ = self.boundary_predictor(hidden, boundaries)
                     stats['acc_boundaries'] = acc_boundaries
                     stats['loss_boundaries'] = loss_boundaries.item()
                     stats['precision'] = precision
                     stats['recall'] = recall
-                    if step > 5000:
+                    if step >= self.bp_switch_step:
                         boundaries = boundaries_preds
-                        # Create masks out of boundary vector
                         downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
                         if 'shortened_length' in self.gather_stats:
                             stats['shortened_length'] = downsampling_mask.size(2)
