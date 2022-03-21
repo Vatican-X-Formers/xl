@@ -143,7 +143,10 @@ def parse_args():
     opt.add_argument('--clip', type=float, default=0.25,
                      help='Gradient clipping')
     opt.add_argument('--weight_decay', type=float, default=0.0,
-                     help='Weight decay for adam|lamb')
+                     help='Weight decay for adam')
+    opt.add_argument('--adam_b1', type=float, default=0.9)
+    opt.add_argument('--adam_b2', type=float, default=0.999)
+    opt.add_argument('--adam_eps', type=float, default=1e-8)
     opt.add_argument('--eta_min', type=float, default=0.000,
                      help='Min learning rate for cosine scheduler')
 
@@ -651,6 +654,8 @@ def main():
                               momentum=args.mom)
     elif args.optim.lower() == 'adam':
         optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                               betas=(args.adam_b1, args.adam_b2),
+                               eps=args.adam_eps,
                                weight_decay=args.weight_decay)
 
     # scheduler
