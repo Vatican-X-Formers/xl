@@ -99,8 +99,8 @@ def parse_args():
                        help='Parameters initialized by N(0, init_std)')
     model.add_argument('--funnel_config', type=str, default="[3, (8,) ,3]",
                        help="[pre_funnel_vanilla_layers, (funnel_layers, ), post_funnel_vanilla_layers]")
-    model.add_argument('--downsample_mode', type=str, default='naive', help='')
-    model.add_argument('--upsample_mode', type=str, default='naive', help='')
+    model.add_argument('--downsample_mode', type=str, default='average', help='')
+    model.add_argument('--upsample_mode', type=str, default='average', help='')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
     model.add_argument('--bp_mode', type=str, default='none')

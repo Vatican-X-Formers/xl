@@ -196,7 +196,7 @@ class Upsampler(nn.Module):
         self.ln = nn.LayerNorm(embedding_dim)
 
     def forward(self, x, residual, upsampling_mask):
-        if self.mode == 'naive':
+        if self.mode == 'average':
             # T x B x C
             x = x.transpose(0, 1)
             x = torch.gather(
@@ -216,7 +216,7 @@ class Downsampler(nn.Module):
     def __init__(self, embedding_dim, mode):
         super().__init__()
         self.mode = mode
-        if mode == 'naive':
+        if mode == 'average':
             # In fixed group size shortening we actually don't need to use that
             # In variable group size approach we might wanna predict boundaries
             # based on data. In such a situaiton we can add a group
@@ -228,7 +228,7 @@ class Downsampler(nn.Module):
 
     def forward(self, x, downsampling_mask):
         # Input is of shape T x B x C
-        if self.mode == 'naive':
+        if self.mode == 'average':
             x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
             x = torch.cat(
                 [self.leftmost_group.repeat(1, x.size(1), 1), x], dim=0
@@ -253,40 +253,20 @@ class BoundaryPredictor(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(d_inner, 1),
             )
-        elif capacity == 'transformer':
-            self.boundary_predictor = nn.Sequential(
-                RelPartialLearnableDecoderLayer(
-                    n_head=8, d_model=512, d_head=64, d_inner=2048, dropout=0.1,
-                    dropatt=0.0, pre_lnorm=False,
-                    activation_function='relu'),
-                nn.Linear(d_model, 1),
-            )
-        elif capacity == 'conv':
-            self.boundary_predictor = nn.Sequential(
-            )
 
-        if mode == 'nothing':
+        if mode == 'default':
             self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
-        elif mode in ['focal', 'equalize']:
+        elif mode in ['equalize']:
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
-        if self.mode in ['nothing']:
+        if self.mode in ['default']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = self.loss(preds, boundaries_gt.float())
 
             preds = torch.sigmoid(preds) >= self.threshold
-        elif self.mode in ['focal']:
-            preds = self.boundary_predictor(hidden).squeeze(-1)
-            loss = self.loss(preds, boundaries_gt.float())
-            preds = torch.sigmoid(preds)
-
-            p_t = preds * boundaries_gt.float() + (1 - preds) * (1 - boundaries_gt.float())
-            loss = loss * ((1 - p_t))
-
-            preds = preds >= self.threshold
         elif self.mode in ['equalize']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
             loss = self.loss(preds, boundaries_gt.float())
@@ -314,7 +294,7 @@ class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_head, d_model, d_head, d_inner,
                  dropout, dropatt, pre_lnorm=False, same_length=False,
                  clamp_len=-1, funnel_config="[3, (1, ) ,3]",
-                 downsample_mode='naive', upsample_mode='naive',
+                 downsample_mode='average', upsample_mode='average',
                  activation_function='relu',
                  gather_stats=[], bp_mode='none', bp_capacity='none',
                  bp_weight=0.0, bp_switch_step=0,
@@ -370,11 +350,14 @@ class MemTransformerLM(nn.Module):
                 ),
                 create_decoder_layers(post_layers),
             ])
-            self.boundary_predictor = BoundaryPredictor(mode=bp_mode,
-                                                        capacity=bp_capacity,
-                                                        d_model=d_model,
-                                                        weight=bp_weight)
-            self.bp_switch_step = bp_switch_step
+
+            # Boundary predictor
+            if bp_mode != 'none':
+                self.boundary_predictor = BoundaryPredictor(mode=bp_mode,
+                                                            capacity=bp_capacity,
+                                                            d_model=d_model,
+                                                            weight=bp_weight)
+                self.bp_switch_step = bp_switch_step
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -463,10 +446,9 @@ class MemTransformerLM(nn.Module):
         tgt_len = target.size(0) if target is not None else data.size(0)
 
         # Create masks out of boundary vector
-        if step < self.bp_switch_step:
-            downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
-            if 'shortened_length' in self.gather_stats:
-                stats['shortened_length'] = downsampling_mask.size(2)
+        downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+        if 'shortened_length' in self.gather_stats:
+            stats['shortened_length'] = downsampling_mask.size(2)
 
         # Token_ids to vector embeddings
         # T x B x C
@@ -484,7 +466,7 @@ class MemTransformerLM(nn.Module):
                 # The residual come from just before shortening
                 hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
             elif isinstance(layers, Downsampler):
-                if self.boundary_predictor.mode != '':
+                if getattr(self, 'boundary_predictor', None) is not None:
                     boundaries_preds, loss_boundaries, acc_boundaries, \
                         precision, recall, _ = self.boundary_predictor(hidden, boundaries)
                     stats['acc_boundaries'] = acc_boundaries
