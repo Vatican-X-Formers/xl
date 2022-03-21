@@ -225,16 +225,55 @@ class Downsampler(nn.Module):
             # need to add special trained vector and not the one gathered from
             # data to prevent autoregressive property
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
+        elif mode == 'lstm':
+            self.downsampler = nn.LSTM(input_size=embedding_dim,
+                                       hidden_size=embedding_dim,
+                                       num_layers=1,
+                                       batch_first=False)
+            self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
+        elif mode == 'gru':
+            self.downsampler = nn.GRU(input_size=embedding_dim,
+                                      hidden_size=embedding_dim,
+                                      num_layers=1,
+                                      batch_first=False)
+            self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
 
-    def forward(self, x, downsampling_mask):
+    def forward(self, x, downsampling_mask, size_of_groups):
         # Input is of shape T x B x C
         if self.mode == 'average':
-            x = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
-            x = torch.cat(
-                [self.leftmost_group.repeat(1, x.size(1), 1), x], dim=0
-            )
+            downsampled_data = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
+        elif self.mode in ['lstm', 'gru']:
+            batch_size, vanilla_length, max_groups_in_batch = downsampling_mask.size()
+            max_group_length = size_of_groups.max().item()
+            # if it works I can further optimize this by processing nonzero groups only
+            # n_groups = (size_of_groups != 0).sum()
 
-        return x
+            tmp = torch.cat(
+                [torch.zeros((batch_size, 1), device=size_of_groups.device,
+                             dtype=size_of_groups.dtype), size_of_groups],
+                dim=1).cumsum(-1)[:, :max_groups_in_batch].flatten()
+
+            # z is (max_groups_in_batch*batch_size) x max_group_length
+            # all (max_groups_in_batch*batch_size) are independent and z will store indexes of elements for each group
+            z = torch.arange(max_group_length, device=size_of_groups.device)[None, :].repeat(max_groups_in_batch * batch_size, 1) + tmp.unsqueeze(-1)
+            z[z >= vanilla_length] = 0
+            z = z.flatten()
+
+            batch_indexes = torch.arange(batch_size, device=size_of_groups.device).repeat_interleave(max_groups_in_batch * max_group_length)
+
+            padded_data_for_rnn = x[z, batch_indexes]
+            padded_data_for_rnn = padded_data_for_rnn.reshape(max_group_length,
+                                                              max_groups_in_batch * batch_size, x.size(-1))
+            rnn_output = self.downsampler(padded_data_for_rnn)[0]
+            extract_indexes = (size_of_groups.flatten() - 1).clamp(min=0)
+            extracted_data = rnn_output[extract_indexes, torch.arange(extract_indexes.size(0), device=size_of_groups.device).long()]
+            downsampled_data = extracted_data.reshape(max_groups_in_batch, batch_size, -1)
+
+        downsampled_data = torch.cat(
+            [self.leftmost_group.repeat(1, x.size(1), 1), downsampled_data], dim=0
+        )
+
+        return downsampled_data
 
 
 class BoundaryPredictor(nn.Module):
@@ -429,9 +468,9 @@ class MemTransformerLM(nn.Module):
         final = torch.zeros_like(foo)
         final[foo == 0] = 1
         size_of_groups = final.sum(1, keepdim=True)
-        downsample_mask = final / (size_of_groups + 1e-9)
+        downsampling_mask = final / (size_of_groups + 1e-9)
 
-        return downsample_mask, upsample_mask, size_of_groups.squeeze(1).long().flatten()
+        return downsampling_mask, upsample_mask, size_of_groups.long().squeeze(1)
 
     def forward(self, data, target, boundaries=None, step=0):
         stats = {}
@@ -480,7 +519,8 @@ class MemTransformerLM(nn.Module):
                             stats['shortened_length'] = downsampling_mask.size(2)
 
                 residual = hidden
-                hidden = layers(hidden, downsampling_mask=downsampling_mask)
+                hidden = layers(hidden, downsampling_mask=downsampling_mask,
+                                size_of_groups=size_of_groups)
             else:
                 hidden = self._forward(
                     hidden,
