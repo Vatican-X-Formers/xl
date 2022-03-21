@@ -160,6 +160,7 @@ def parse_args():
                           'gradient accumulation')
     training.add_argument('--roll', action='store_true',
                           help='Enable random shifts within each data stream')
+    training.add_argument('--shuffle', action='store_true')
     training.add_argument('--tgt_len', type=int, default=192,
                           help='Number of tokens to predict')
     training.add_argument('--ext_len', type=int, default=0,
@@ -418,7 +419,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     stats_agg = defaultdict(list)
 
     log_start_time = time.time()
-    train_iter = tr_iter.get_fixlen_iter(start=last_iter)
+    train_iter = tr_iter.get_fixlen_iter(start=last_iter, shuffle=args.shuffle)
 
     for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
         log_step += 1
@@ -698,25 +699,21 @@ def main():
     ###########################################################################
     # Train
     ###########################################################################
-    train_step = 0
-    start_epoch = 1
-    last_iter = 0
-
     with TimeoutHandler() as timeout_handler:
         # At any point you can hit Ctrl + C to break out of training early.
         try:
-            for epoch in itertools.count(start=start_epoch):
+            for epoch in itertools.count(start=1):
                 if args.roll:
                     tr_iter.roll(seed=args.seed + epoch)
                 train_step = train(
                     tr_iter, va_iters, model, model_config,
                     optimizer, scheduler,
                     vocab, epoch,
-                    last_iter, train_step,
-                    timeout_handler, args
+                    last_iter=0,
+                    train_step=0,
+                    timeout_handler=timeout_handler,
+                    args=args
                     )
-
-                last_iter = 0
 
                 if train_step == args.max_step:
                     print('End of training')

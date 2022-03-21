@@ -15,6 +15,7 @@
 import logging
 import os
 import torch
+import random
 import pdb
 
 import utils
@@ -76,11 +77,8 @@ class LMOrderedIterator(object):
             row = torch.cat((row[shift:], row[:shift]))
             self.data[:, i] = row
 
-    def get_batch(self, i, tgt_len=None):
-        if tgt_len is None:
-            tgt_len = self.tgt_len
-
-        seq_len = min(tgt_len, self.data.size(0) - 1 - i)
+    def get_batch(self, i):
+        seq_len = min(self.tgt_len, self.data.size(0) - 1 - i)
 
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
@@ -98,12 +96,19 @@ class LMOrderedIterator(object):
 
         return data, target, seq_len, boundaries
 
-    def get_fixlen_iter(self, start=0):
+    def get_fixlen_iter(self, start=0, shuffle=False):
         if start != 0:
             start += self.tgt_len
-        for i in range(start, self.data.size(0) - 1, self.tgt_len):
-            self.last_iter = i
-            yield self.get_batch(i)
+
+        if shuffle:
+            indexes = list(range(start, self.data.size(0) - 1, self.tgt_len))
+            random.shuffle(indexes)
+            for idx in indexes:
+                yield self.get_batch(idx)
+        else:
+            for i in range(start, self.data.size(0) - 1, self.tgt_len):
+                self.last_iter = i
+                yield self.get_batch(i)
 
     def __iter__(self):
         return self.get_fixlen_iter()
