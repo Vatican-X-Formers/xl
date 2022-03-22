@@ -195,7 +195,25 @@ class Upsampler(nn.Module):
         self.mode = mode
         self.ln = nn.LayerNorm(embedding_dim)
 
-    def forward(self, x, residual, upsampling_mask):
+        if self.mode == 'add_positionals':
+            self.pos_emb = PositionalEmbedding(embedding_dim)
+            self.pos_emb_cast = nn.Linear(embedding_dim, embedding_dim)
+
+    def position_within_group(self, boundaries):
+        neg_x = (~boundaries)
+        neg_x[:, 0] = False
+
+        y = neg_x.cumsum(-1)
+        y[neg_x] = 0
+        y = y[:, 1:] - y[:, :-1].cummax(-1).values
+        y = torch.cat([torch.zeros(boundaries.size(0), 1).to(boundaries.device), y], dim=-1)
+        y[neg_x] = 0
+
+        z = (neg_x.int() - y).cumsum(-1)
+
+        return z + 1
+
+    def forward(self, x, residual, upsampling_mask, boundaries):
         if self.mode == 'average':
             # T x B x C
             x = x.transpose(0, 1)
@@ -204,6 +222,20 @@ class Upsampler(nn.Module):
             )
             x = x.transpose(0, 1)
             assert x.size() == residual.size()
+        elif self.mode == 'add_positionals':
+            # T x B x C
+            x = x.transpose(0, 1)
+            x = torch.gather(
+                x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, x.size(-1))
+            )
+            x = x.transpose(0, 1)
+            assert x.size() == residual.size()
+
+            positions = self.position_within_group(boundaries)
+            pos_emb = self.pos_emb(positions.flatten())
+            pos_emb = pos_emb.reshape(x.size())
+            pos_emb = self.pos_emb_cast(pos_emb)
+            x += pos_emb
 
         # The upsampled vector can be longer from just before shortening
         assert x.size(0) >= residual.size(0)
@@ -503,7 +535,9 @@ class MemTransformerLM(nn.Module):
 
             if isinstance(layers, Upsampler):
                 # The residual come from just before shortening
-                hidden = layers(hidden, residual=residual, upsampling_mask=upsampling_mask)
+                hidden = layers(hidden, residual=residual,
+                                upsampling_mask=upsampling_mask,
+                                boundaries=boundaries)
             elif isinstance(layers, Downsampler):
                 if getattr(self, 'boundary_predictor', None) is not None:
                     boundaries_preds, loss_boundaries, acc_boundaries, \
