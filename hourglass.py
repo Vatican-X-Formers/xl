@@ -269,6 +269,10 @@ class Downsampler(nn.Module):
                                       num_layers=1,
                                       batch_first=False)
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
+        elif mode == 'add_group_length':
+            self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
+            self.pos_emb = PositionalEmbedding(embedding_dim)
+            self.pos_emb_cast = nn.Linear(embedding_dim, embedding_dim)
 
     def forward(self, x, downsampling_mask, size_of_groups):
         # Input is of shape T x B x C
@@ -300,6 +304,12 @@ class Downsampler(nn.Module):
             extract_indexes = (size_of_groups.flatten() - 1).clamp(min=0)
             extracted_data = rnn_output[extract_indexes, torch.arange(extract_indexes.size(0), device=size_of_groups.device).long()]
             downsampled_data = extracted_data.reshape(max_groups_in_batch, batch_size, -1)
+        elif self.mode == 'add_group_length':
+            downsampled_data = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
+            pos_emb = self.pos_emb(size_of_groups.t().float().flatten())
+            pos_emb = pos_emb.reshape(downsampled_data.size())
+            pos_emb = self.pos_emb_cast(pos_emb)
+            downsampled_data += pos_emb
 
         downsampled_data = torch.cat(
             [self.leftmost_group.repeat(1, x.size(1), 1), downsampled_data], dim=0
