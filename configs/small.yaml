@@ -12,22 +12,24 @@ model: &model
    pre_lnorm: false
    funnel_config: "[2, (8,), 2]"
    activation_function: relu
-   downsample_mode: 'naive'
-   upsample_mode: 'naive'
+   downsample_mode: 'average'
+   upsample_mode: 'average'
 
 bp: &bp
-   bp_mode: 'equalize'
+   bp_mode: 'none'
    bp_capacity: 'nonlinear'
    bp_weight: 1.0
    bp_switch_step: 500
 
-boundaries: &boundaries
-   boundaries_type: 'tokenizer'
-   boundary_ids: '["_"]'
+tokenizer: &tokenizer
    tokenizer_type: 'unigram'
    tokenizer_vocab_size: 5000
    tokenizer_dropout: 0.0
    tokenizer_algorithm: 'approachna'
+
+boundaries: &boundaries
+   boundaries_type: 'ids'
+   boundary_ids: '["_"]'
 
 eval: &eval
    eval_interval: 10000
@@ -42,6 +44,9 @@ optim: &optim
    warmup_step: 0
    clip: 0.25
    weight_decay: 0
+   adam_b1: 0.9
+   adam_b2: 0.999
+   adam_eps: 1e-8
 
 train: &train
    multi_gpu: ddp
@@ -57,6 +62,7 @@ default:
       <<: *text8
       <<: *model
       <<: *bp
+      <<: *tokenizer
       <<: *boundaries
       <<: *eval
       <<: *optim
