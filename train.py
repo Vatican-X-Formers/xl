@@ -503,7 +503,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
                     avg_elapsed * 1000,
                     throughput,
                     cur_loss,
-                    )
+                )
             print_once(log_str, args)
 
             if run:
@@ -702,6 +702,7 @@ def main():
     with TimeoutHandler() as timeout_handler:
         # At any point you can hit Ctrl + C to break out of training early.
         try:
+            train_step = 0
             for epoch in itertools.count(start=1):
                 if args.roll:
                     tr_iter.roll(seed=args.seed + epoch)
@@ -710,7 +711,7 @@ def main():
                     optimizer, scheduler,
                     vocab, epoch,
                     last_iter=0,
-                    train_step=0,
+                    train_step=train_step,
                     timeout_handler=timeout_handler,
                     args=args
                     )

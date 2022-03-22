@@ -56,7 +56,7 @@ class BoundaryCreator():
 
         # Delete
         non_zeros = batch_nonzero_ids.size(0)
-        to_erase = int(non_zeros*self.deletion_prob)
+        to_erase = int(non_zeros * self.deletion_prob)
         delete_boundaries = torch.randperm(non_zeros)[:to_erase].to(final_boundaries.device)
         final_boundaries[(batch_nonzero_ids[delete_boundaries], elems_nonzero_ids[delete_boundaries])] = 0
 
