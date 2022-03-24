@@ -236,6 +236,14 @@ class Upsampler(nn.Module):
             pos_emb = pos_emb.reshape(x.size())
             pos_emb = self.pos_emb_cast(pos_emb)
             x += pos_emb
+        elif self.mode == 'add_to_last':
+
+            x = x.transpose(0, 1)
+            x = torch.gather(
+                x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, x.size(-1))
+            )
+            x = x.transpose(0, 1)
+            assert x.size() == residual.size()
 
         # The upsampled vector can be longer from just before shortening
         assert x.size(0) >= residual.size(0)
@@ -269,10 +277,14 @@ class Downsampler(nn.Module):
                                       num_layers=1,
                                       batch_first=False)
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
-        elif mode == 'add_group_length':
+        elif mode == 'add_group_length_emb':
+            self.group_size_emb = nn.Embedding(120, embedding_dim)
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
-            self.pos_emb = PositionalEmbedding(embedding_dim)
-            self.pos_emb_cast = nn.Linear(embedding_dim, embedding_dim)
+            # self.pos_emb = PositionalEmbedding(embedding_dim)
+            # self.pos_emb_cast = nn.Sequential(
+            #     nn.Linear(embedding_dim, embedding_dim),
+            #     nn.ReLU(),
+            # )
 
     def forward(self, x, downsampling_mask, size_of_groups):
         # Input is of shape T x B x C
@@ -304,12 +316,13 @@ class Downsampler(nn.Module):
             extract_indexes = (size_of_groups.flatten() - 1).clamp(min=0)
             extracted_data = rnn_output[extract_indexes, torch.arange(extract_indexes.size(0), device=size_of_groups.device).long()]
             downsampled_data = extracted_data.reshape(max_groups_in_batch, batch_size, -1)
-        elif self.mode == 'add_group_length':
+        elif self.mode == 'add_group_length_emb':
             downsampled_data = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
-            pos_emb = self.pos_emb(size_of_groups.t().float().flatten())
-            pos_emb = pos_emb.reshape(downsampled_data.size())
-            pos_emb = self.pos_emb_cast(pos_emb)
-            downsampled_data += pos_emb
+            downsampled_data += self.group_size_emb(size_of_groups).transpose(0, 1)
+            # pos_emb = self.pos_emb(size_of_groups.t().float().flatten())
+            # pos_emb = pos_emb.reshape(downsampled_data.size())
+            # pos_emb = self.pos_emb_cast(pos_emb)
+            # downsampled_data = self.ln(downsampled_data) + pos_emb
 
         downsampled_data = torch.cat(
             [self.leftmost_group.repeat(1, x.size(1), 1), downsampled_data], dim=0
@@ -528,6 +541,7 @@ class MemTransformerLM(nn.Module):
 
         # Create masks out of boundary vector
         downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+
         if 'shortened_length' in self.gather_stats:
             stats['shortened_length'] = downsampling_mask.size(2)
 
