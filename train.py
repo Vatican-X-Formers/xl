@@ -584,14 +584,14 @@ def main():
     args = parse_args()
 
     # Nv speed improvement by 15%, assigning particular CPU threads and link to particular GPUs
-    if args.affinity != 'disabled':
-        nproc_per_node = torch.cuda.device_count()
-        affinity = utils.gpu_affinity.set_affinity(
-            args.local_rank,
-            nproc_per_node,
-            args.affinity
-        )
-        print(f'{args.local_rank}: thread affinity: {affinity}')
+    # if args.affinity != 'disabled':
+    #     nproc_per_node = torch.cuda.device_count()
+    #     affinity = utils.gpu_affinity.set_affinity(
+    #         args.local_rank,
+    #         nproc_per_node,
+    #         args.affinity
+    #     )
+    #     print(f'{args.local_rank}: thread affinity: {affinity}')
 
     # Initialize distributed backend
     torch.cuda.set_device(args.local_rank)
