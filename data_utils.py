@@ -112,7 +112,7 @@ class LMOrderedIterator(object):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=2
+            num_workers=0
         )
 
     def __iter__(self):

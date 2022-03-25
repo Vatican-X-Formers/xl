@@ -205,9 +205,9 @@ class SPMBoundaries(BoundaryCreator):
                     data[acc_idx] = 26
                 acc_idx += 1
 
-        target = data[1:]
-        data = data[:-1]
-        boundaries = boundaries[:-1]
+        target = data[1:acc_idx]
+        data = data[:acc_idx - 1]
+        boundaries = boundaries[:acc_idx - 1]
 
         # data = data.to(self.device, non_blocking=True)
         # target = target.to(self.device, non_blocking=True)
@@ -229,6 +229,8 @@ class SPMBoundaries(BoundaryCreator):
             if data[i][0] != ' ':
                 assert encoded_texts[i][0].startswith('▁')
                 encoded_texts[i][0] = encoded_texts[i][0][1:]
+            if data[i][-1] == ' ':
+                encoded_texts[i].append('▁')
         out = list(map(self.get_tensors, encoded_texts))
         data, target, boundaries = zip(*out)
         return data, target, boundaries
