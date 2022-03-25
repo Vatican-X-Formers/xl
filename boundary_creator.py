@@ -185,7 +185,7 @@ class SPMBoundaries(BoundaryCreator):
         filepath = os.path.join(tokenizer_save_dir, 'spm', filename)
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
         self.vocab = vocab
-        self.max_len = 2049
+        self.max_len = 2049 * 2
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
         assert tokenizer_type.startswith('spm')
@@ -197,6 +197,10 @@ class SPMBoundaries(BoundaryCreator):
         boundaries = np.zeros(self.max_len)
         acc_idx = 0
         for piece in pieces:
+            if not piece.startswith('▁'):
+                data[acc_idx] = 27
+                acc_idx += 1
+
             boundaries[acc_idx] = 1
             for c in piece:
                 if c != '▁':

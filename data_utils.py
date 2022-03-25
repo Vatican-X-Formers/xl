@@ -94,6 +94,7 @@ class LMOrderedIterator(object):
         out = \
             self.boundary_creator.get_boundaries([self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))])
         data, target, boundaries = out
+        pdb.set_trace()
         n_examples = len(self.data)
         data = torch.tensor(np.concatenate(data)).reshape(n_examples,
                                                           -1).t().long()
@@ -112,7 +113,7 @@ class LMOrderedIterator(object):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=2
+            num_workers=0
         )
 
     def __iter__(self):
