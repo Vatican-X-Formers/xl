@@ -1,7 +1,11 @@
 import os
 import pdb
 import torch
+import numpy as np
 from tokenizers import Tokenizer
+import sentencepiece as spm
+from multiprocessing import Pool
+
 
 class BoundaryCreator():
     def __init__(
@@ -171,6 +175,65 @@ class TokenizerBoundaryCreator(BoundaryCreator):
         return self.tokenizer.get_boundaries(data)
 
 
+class SPMBoundaries(BoundaryCreator):
+    def __init__(self, boundaries_type, tokenizer_type, tokenizer_vocab_size,
+                 tokenizer_save_dir, vocab, **kwargs):
+        super().__init__(boundaries_type, **kwargs)
+        self.extract_offline = False
+        filename = self.get_tokenizer_filename(tokenizer_type,
+                                               tokenizer_vocab_size)
+        filepath = os.path.join(tokenizer_save_dir, 'spm', filename)
+        self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
+        self.vocab = vocab
+        self.max_len = 2049
+
+    def get_tokenizer_filename(self, tokenizer_type, vocab_size):
+        assert tokenizer_type.startswith('spm')
+        filename = f'{tokenizer_type}-{vocab_size}.model'
+        return filename
+
+    def get_tensors(self, pieces):
+        data = np.zeros(self.max_len)
+        boundaries = np.zeros(self.max_len)
+        acc_idx = 0
+        for piece in pieces:
+            boundaries[acc_idx] = 1
+            for c in piece:
+                if c != '▁':
+                    data[acc_idx] = ord(c) - ord('a')
+                else:
+                    data[acc_idx] = 26
+                acc_idx += 1
+
+        target = data[1:]
+        data = data[:-1]
+        boundaries = boundaries[:-1]
+
+        # data = data.to(self.device, non_blocking=True)
+        # target = target.to(self.device, non_blocking=True)
+        # boundaries = boundaries.to(self.device, non_blocking=True)
+        return data, target, boundaries
+
+    def get_boundaries(self, data):
+        """
+            Function that generates boundaries for given tensor of data
+
+            Attributes:
+                data - (torch.LongTensor) - [seq_len x batch_size]
+
+            Returns:
+                boundaries - (torch.BoolTensor) - [batch_size x seq_len]
+        """
+        encoded_texts = self.tokenizer.encode(data, out_type=str)
+        for i in range(len(data)):
+            if data[i][0] != ' ':
+                assert encoded_texts[i][0].startswith('▁')
+                encoded_texts[i][0] = encoded_texts[i][0][1:]
+        out = list(map(self.get_tensors, encoded_texts))
+        data, target, boundaries = zip(*out)
+        return data, target, boundaries
+
+
 def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
     if boundaries_type in ['noboundaries', 'ids', 'constant', 'normal', 'space_dist']:
         filename = os.path.join(datadir, 'cache.pt')
@@ -179,8 +242,7 @@ def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
             filename = os.path.join(datadir,
                                     f'cache_{kwargs["tokenizer_type"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
         else:
-            filename = os.path.join(datadir,
-    f'cache_{kwargs["tokenizer_type"]}_drop{kwargs["tokenizer_dropout"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
+            filename = os.path.join(datadir, f'cache_{kwargs["tokenizer_type"]}_drop{kwargs["tokenizer_dropout"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
 
     return filename
 
@@ -189,7 +251,10 @@ def get_boundary_creator(boundaries_type, **kwargs):
     if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
         return BoundaryCreator(boundaries_type, **kwargs)
     elif boundaries_type == 'tokenizer':
-        return TokenizerBoundaryCreator(boundaries_type, **kwargs)
+        if kwargs['tokenizer_type'].startswith('spm'):
+            return SPMBoundaries(boundaries_type, **kwargs)
+        else:
+            return TokenizerBoundaryCreator(boundaries_type, **kwargs)
 
 
 if __name__ == '__main__':

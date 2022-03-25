@@ -422,6 +422,9 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     train_iter = tr_iter.get_fixlen_iter(start=last_iter, shuffle=args.shuffle)
 
     for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
+        data = data.to(tr_iter.device, non_blocking=True)
+        target = target.to(tr_iter.device, non_blocking=True)
+        boundaries = boundaries.to(tr_iter.device, non_blocking=True)
         log_step += 1
         target_tokens += target.numel()
 

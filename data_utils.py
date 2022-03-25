@@ -15,8 +15,10 @@
 import logging
 import os
 import torch
+import numpy as np
 import random
 import pdb
+from torch.utils.data import DataLoader
 
 import utils
 from utils.vocabulary import Vocab
@@ -37,18 +39,21 @@ class LMOrderedIterator(object):
         data, boundaries = data
 
         # Work out how cleanly we can divide the dataset into bsz parts.
-        n_step = data.size(0) // bsz
+        n_step = len(data) // bsz
 
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         data = data[:n_step * bsz]
 
-        # Evenly divide the data across the bsz batches.
-        self.data = data.view(bsz, -1).t().contiguous().pin_memory()
-
         # Partition data for DistributedDataParallel
         world_size = utils.distributed.get_world_size()
         rank = utils.distributed.get_rank()
-        self.data = self.data.chunk(world_size, dim=1)[rank]
+
+        assert len(data) % world_size == 0
+        first_leap = len(data) // world_size
+        data = [data[i:i + first_leap] for i in range(0, len(data), first_leap)]
+        data = data[rank]
+        data = [data[i:i + n_step] for i in range(0, len(data), n_step)]
+        self.data = data
 
         if boundaries is not None:
             boundaries = boundaries[:n_step * bsz]
@@ -64,51 +69,51 @@ class LMOrderedIterator(object):
         self.boundary_creator = boundary_creator
 
         # Number of mini-batches
-        self.n_batch = (self.data.size(0) + self.tgt_len - 1) // self.tgt_len
+        self.data_len = len(data[0])
+        self.n_batch = (self.data_len + self.tgt_len - 1) // self.tgt_len
 
         self.last_iter = None
 
     def roll(self, seed):
-        rng = torch.Generator()
-        rng.manual_seed(seed)
-        for i in range(self.data.size(1)):
-            row = self.data[:, i]
-            shift = torch.randint(0, self.data.size(0), (1,), generator=rng)
-            row = torch.cat((row[shift:], row[:shift]))
-            self.data[:, i] = row
+        raise NotImplementedError
+        # rng = torch.Generator()
+        # rng.manual_seed(seed)
+        # for i in range(self.data.size(1)):
+        #     row = self.data[:, i]
+        #     shift = torch.randint(0, self.data_len, (1,), generator=rng)
+        #     row = torch.cat((row[shift:], row[:shift]))
+        #     self.data[:, i] = row
 
     def get_batch(self, i):
-        seq_len = min(self.tgt_len, self.data.size(0) - 1 - i)
+        i = i[0]
+        seq_len = min(self.tgt_len, self.data_len - 1 - i)
 
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
 
-        data = self.data[beg_idx:end_idx].to(self.device, non_blocking=True)
-
-        if self.boundaries is not None:
-            boundaries = self.boundaries[beg_idx:end_idx].to(self.device, non_blocking=True)
-        else:
-            boundaries = self.boundary_creator.get_boundaries(data)
-            if boundaries is not None:
-                boundaries = boundaries.transpose(0, 1)
-
-        target = self.data[i + 1:i + 1 + seq_len].to(self.device, non_blocking=True)
+        out = \
+            self.boundary_creator.get_boundaries([self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))])
+        data, target, boundaries = out
+        n_examples = len(self.data)
+        data = torch.tensor(np.concatenate(data)).reshape(n_examples,
+                                                          -1).t().long()
+        target = torch.tensor(np.concatenate(target)).reshape(n_examples,
+                                                              -1).t().long()
+        boundaries = torch.tensor(np.concatenate(boundaries)).reshape(n_examples, -1).t().bool()
 
         return data, target, seq_len, boundaries
 
     def get_fixlen_iter(self, start=0, shuffle=False):
-        if start != 0:
-            start += self.tgt_len
+        dataset = [i for i in range(start, self.data_len - 1, self.tgt_len)]
 
-        if shuffle:
-            indexes = list(range(start, self.data.size(0) - 1, self.tgt_len))
-            random.shuffle(indexes)
-            for idx in indexes:
-                yield self.get_batch(idx)
-        else:
-            for i in range(start, self.data.size(0) - 1, self.tgt_len):
-                self.last_iter = i
-                yield self.get_batch(i)
+        return DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            pin_memory=True,
+            collate_fn=self.get_batch,
+            num_workers=2
+        )
 
     def __iter__(self):
         return self.get_fixlen_iter()
@@ -117,61 +122,36 @@ class LMOrderedIterator(object):
 class Corpus(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
-        self.vocab = Vocab(*args, **kwargs)
         self.data = {}
+        self.vocab = [i for i in range(27)]
 
         for split in ['train', 'valid', 'test']:
             dataset_path = os.path.join(path, f'{split}.txt')
-            self.vocab.count_file(dataset_path)
+            sents = []
+            with open(dataset_path, 'r', encoding='utf-8') as f:
+                for idx, line in enumerate(f):
+                    sents.append(line)
+            assert len(sents) == 1
+            sent = sents[0].replace(' ', '').replace('_', ' ')
 
-        self.vocab.build_vocab()
-        boundary_ids = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
-        kwargs['boundary_ids'] = boundary_ids
+            self.data[split] = sent, None
 
+        kwargs = self.extend_kwargs_for_bc(**kwargs)
         self.boundary_creator = get_boundary_creator(**kwargs)
-        extract_boundaries = self.boundary_creator.extract_offline
 
-        for split in ['train', 'valid', 'test']:
-            dataset_path = os.path.join(path, f'{split}.txt')
-            if self.dataset in ['enwik8']:
-                self.data[split] = self.vocab.encode_file(
-                        dataset_path,
-                        add_eos=True,
-                        boundary_creator=self.boundary_creator,
-                        extract_boundaries=extract_boundaries,
-                )
-            elif self.dataset in ['text8']:
-                self.data[split] = self.vocab.encode_file(
-                        dataset_path,
-                        add_eos=False,
-                        boundary_creator=self.boundary_creator,
-                        extract_boundaries=extract_boundaries,
-                )
+    def extend_kwargs_for_bc(self, **kwargs):
+        kwargs['boundary_ids'] = []
+        kwargs['vocab'] = []
+        return kwargs
 
     def get_iterator(self, split, *args, **kwargs):
-        boundary_ids = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
-        kwargs['boundary_ids'] = boundary_ids
+        kwargs = self.extend_kwargs_for_bc(**kwargs)
         return LMOrderedIterator(self.data[split], boundary_creator=get_boundary_creator(**kwargs), *args)
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
     filename = get_boundary_checkpoint_name(datadir, **kwargs)
     logging.info(f'Target corpus is under path {filename}')
-
-    if os.path.exists(filename):
-        logging.info('\nLoading cached dataset...')
-        corpus = torch.load(filename)
-    else:
-        logging.info('\nProducing dataset {}...'.format(dataset))
-        if dataset == 'enwik8':
-            kwargs['special'] = ['<eos>']
-        elif dataset == 'text8':
-            pass
-
-        corpus = Corpus(datadir, dataset, **kwargs)
-        with utils.distributed.sync_workers() as rank:
-            if rank == 0:
-                torch.save(corpus, filename)
-                os.chmod(filename, 0o777)
+    corpus = Corpus(datadir, dataset, **kwargs)
 
     return corpus
