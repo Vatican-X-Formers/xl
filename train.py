@@ -391,7 +391,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
     total_loss.backward()
 
-    return seq_loss.item(), stats
+    return seq_loss.item() / args.batch_chunk, stats
 
 
 def train(tr_iter, va_iters, model, model_config, optimizer,
