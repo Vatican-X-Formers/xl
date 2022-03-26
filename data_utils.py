@@ -94,14 +94,22 @@ class LMOrderedIterator(object):
         out = \
             self.boundary_creator.get_boundaries([self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))])
         data, target, boundaries = out
-        n_examples = len(self.data)
-        data = torch.tensor(np.concatenate(data)).reshape(n_examples,
-                                                          -1).t().long()
-        target = torch.tensor(np.concatenate(target)).reshape(n_examples,
-                                                              -1).t().long()
-        boundaries = torch.tensor(np.concatenate(boundaries)).reshape(n_examples, -1).t().bool()
 
-        return data, target, seq_len, boundaries
+        lengths = [len(data[i]) for i in range(len(data))]
+        maximum_length = max(lengths)
+        final_shape = (len(self.data), maximum_length)
+        data_final, target_final, boundaries_final = torch.zeros(final_shape), torch.zeros(final_shape), torch.zeros(final_shape)
+
+        for i in range(len(self.data)):
+            data_final[i, :lengths[i]] = torch.tensor(data[i])
+            target_final[i, :lengths[i]] = torch.tensor(target[i])
+            boundaries_final[i, :lengths[i]] = torch.tensor(boundaries[i])
+
+        data_final = data_final.t().long()
+        target_final = target_final.t().long()
+        boundaries_final = boundaries_final.t().bool()
+
+        return data_final, target_final, seq_len, boundaries_final, torch.tensor(lengths)
 
     def get_fixlen_iter(self, start=0, shuffle=False):
         dataset = [i for i in range(start, self.data_len - 1, self.tgt_len)]
@@ -116,14 +124,14 @@ class LMOrderedIterator(object):
         )
 
     def __iter__(self):
-        return self.get_fixlen_iter()
+        return self.get_fixlen_iter().__iter__()
 
 
 class Corpus(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
         self.data = {}
-        self.vocab = [i for i in range(27)]
+        self.vocab = [i for i in range(28)]
 
         for split in ['train', 'valid', 'test']:
             dataset_path = os.path.join(path, f'{split}.txt')

@@ -309,7 +309,7 @@ def evaluate(eval_iter, model, args, step):
     # Evaluation
     total_len, total_loss, total_aux_loss = 0, 0., 0.
     with torch.no_grad():
-        for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
+        for i, (data, target, seq_len, boundaries, lengths) in enumerate(eval_iter):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             loss, stats, aux_loss = model(data, target, boundaries, step=step)
@@ -375,7 +375,7 @@ def get_boundary_config(args):
 
 
 def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
-                    args, step):
+                    args, step, seq_len, lengths):
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
 
@@ -386,7 +386,9 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
     seq_loss, stats, aux_loss = model(data_i, target_i,
                                       boundaries=boundaries_i, step=step)
-    seq_loss = seq_loss.float().mean().type_as(seq_loss)
+    mask = torch.arange(seq_loss.size(0), device=seq_loss.device).unsqueeze(1) < lengths.unsqueeze(0).cuda()
+    pdb.set_trace()
+    seq_loss = seq_loss.float().type_as(seq_loss)
     total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
     total_loss.backward()
@@ -421,7 +423,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     log_start_time = time.time()
     train_iter = tr_iter.get_fixlen_iter(start=last_iter, shuffle=args.shuffle)
 
-    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
+    for batch, (data, target, seq_len, boundaries, lengths) in enumerate(train_iter, start=1):
         data = data.to(tr_iter.device, non_blocking=True)
         target = target.to(tr_iter.device, non_blocking=True)
         boundaries = boundaries.to(tr_iter.device, non_blocking=True)
@@ -433,6 +435,8 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
 
         data_chunks = torch.chunk(data, args.batch_chunk, 1)
         target_chunks = torch.chunk(target, args.batch_chunk, 1)
+        pdb.set_trace()
+        lengths_chunks = torch.chunk(lengths, args.batch_chunk, 1)
         if boundaries is not None:
             boundaries_chunks = torch.chunk(boundaries, args.batch_chunk, 1)
         else:
@@ -443,12 +447,13 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
                 with model.no_sync():
                     train_loss_chunk, stats = train_iteration(
                         model, i, data_chunks, target_chunks,
-                        boundaries_chunks, args, train_step
+                        boundaries_chunks, args, train_step,
+                        seq_len, lengths
                     )
             else:
                 train_loss_chunk, stats = train_iteration(
                     model, i, data_chunks, target_chunks, boundaries_chunks,
-                    args, train_step
+                    args, train_step, seq_len, lengths
                 )
 
             train_loss += train_loss_chunk
