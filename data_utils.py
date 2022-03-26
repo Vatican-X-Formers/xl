@@ -24,15 +24,17 @@ import utils
 from utils.vocabulary import Vocab
 from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator
 
+
 class LMOrderedIterator(object):
-    def __init__(self, data, bsz, tgt_len, device='cpu', ext_len=None, boundary_creator=None):
+    def __init__(self, data, bsz, tgt_len, ext_len, vocab, device,
+                 boundary_creator, **kwargs):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
         self.bsz = bsz
         self.tgt_len = tgt_len
         self.ext_len = ext_len if ext_len is not None else 0
-
+        self.vocab = vocab
         self.device = device
 
         # Data is a tuple, the data tensor and boundaries from boundaries
@@ -87,19 +89,25 @@ class LMOrderedIterator(object):
     def get_batch(self, i):
         i = i[0]
         seq_len = min(self.tgt_len, self.data_len - 1 - i)
+        batch_size = len(self.data)
 
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
 
-        out = \
-            self.boundary_creator.get_boundaries([self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))])
-        data, target, boundaries = out
-        n_examples = len(self.data)
-        data = torch.tensor(np.concatenate(data)).reshape(n_examples,
-                                                          -1).t().long().contiguous()
-        target = torch.tensor(np.concatenate(target)).reshape(n_examples,
-                                                              -1).t().long().contiguous()
-        boundaries = torch.tensor(np.concatenate(boundaries)).reshape(n_examples, -1).t().bool().contiguous()
+        if True:
+            current_batch = [self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))]
+            boundaries = self.boundary_creator.get_boundaries(current_batch).t().bool().contiguous()[:-1, :]
+            data = [self.vocab.convert_to_tensor(current_batch[i].replace(' ',
+                                                                          '_')).unsqueeze(1) for i in range(batch_size)]
+            data = torch.cat(data, dim=1).long().contiguous()
+            target = data[1:, :]
+            data = data[:-1, :]
+        else:
+            # na pozniej
+            data, target, boundaries = self.boundary_creator.get_boundaries([self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))])
+            data = torch.tensor(np.concatenate(data)).reshape(batch_size, -1).t().long().contiguous()
+            target = torch.tensor(np.concatenate(target)).reshape(batch_size, -1).t().long().contiguous()
+            boundaries = torch.tensor(np.concatenate(boundaries)).reshape(batch_size, -1).t().bool().contiguous()
 
         return data, target, seq_len, boundaries
 
@@ -120,10 +128,11 @@ class Corpus(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
         self.data = {}
-        self.vocab = [i for i in range(27)]
+        self.vocab = Vocab(*args, **kwargs)
 
         for split in ['train', 'valid', 'test']:
             dataset_path = os.path.join(path, f'{split}.txt')
+            self.vocab.count_file(dataset_path)
             sents = []
             with open(dataset_path, 'r', encoding='utf-8') as f:
                 for idx, line in enumerate(f):
@@ -133,17 +142,23 @@ class Corpus(object):
 
             self.data[split] = sent, None
 
+        self.vocab.build_vocab()
+
         kwargs = self.extend_kwargs_for_bc(**kwargs)
         self.boundary_creator = get_boundary_creator(**kwargs)
 
     def extend_kwargs_for_bc(self, **kwargs):
         kwargs['boundary_ids'] = []
-        kwargs['vocab'] = []
         return kwargs
 
-    def get_iterator(self, split, *args, **kwargs):
+    def get_iterator(self, split, **kwargs):
         kwargs = self.extend_kwargs_for_bc(**kwargs)
-        return LMOrderedIterator(self.data[split], *args, boundary_creator=get_boundary_creator(**kwargs))
+        return LMOrderedIterator(
+            data=self.data[split],
+            boundary_creator=get_boundary_creator(**kwargs),
+            vocab=self.vocab,
+            **kwargs
+        )
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):

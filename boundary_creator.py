@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from tokenizers import Tokenizer
 import sentencepiece as spm
+from tokenizer import AutoregressiveTokeniser
 from multiprocessing import Pool
 
 
@@ -11,7 +12,7 @@ class BoundaryCreator():
     def __init__(
         self, boundaries_type, boundary_ids=None,
         move_prob=0.0, deletion_prob=0.0, insert_prob=0.0,
-        clamp_group_sizes=False, min_group_length=0, max_group_length=1000*1000,
+        clamp_group_sizes=False, min_group_length=0, max_group_length=1000 * 1000,
         mean_normal=5.5, std_normal=1, **kwargs,
     ):
         self.boundaries_type = boundaries_type
@@ -110,7 +111,7 @@ class BoundaryCreator():
         if self.boundaries_type == 'noboundaries':
             return None
 
-        data = data.transpose(0, 1) # batch_size x seq_len
+        data = data.transpose(0, 1)  # batch_size x seq_len
         boundaries = torch.zeros_like(data, dtype=torch.bool)
 
         if self.boundaries_type == "ids":
@@ -118,23 +119,22 @@ class BoundaryCreator():
                 boundaries |= (data == boundary_id)
         elif self.boundaries_type == "normal":
             group_sizes = torch.normal(mean=self.mean_normal,
-                             std=self.std_normal,
-                             size=data.size(),
-                             )
+                                       std=self.std_normal,
+                                       size=data.size(),)
             group_sizes = group_sizes.round().clamp(self.min_group_length, self.max_group_length).long().to(data.device)
             boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
         elif self.boundaries_type == "space_dist":
             # These are word lengths extracted from text8 dataset
-            space_dist = [632308, 2401024, 3410951, 2733289, 2023812, 1447078, 1407995, \
-                           1071319, 765731, 517567, 282529, 162820, 87729, 38597, 13429]
+            space_dist = [632308, 2401024, 3410951, 2733289, 2023812, 1447078, 1407995,
+                          1071319, 765731, 517567, 282529, 162820, 87729, 38597, 13429]
             space_dist = torch.tensor(space_dist)
 
-            group_sizes = torch.multinomial(input=space_dist.float(), num_samples=data.numel() ,replacement=True)
+            group_sizes = torch.multinomial(input=space_dist.float(), num_samples=data.numel(), replacement=True)
             group_sizes = group_sizes.reshape(data.size()).long().to(data.device)
-            group_sizes += 2 # This is the shift of the distribution
+            group_sizes += 2  # This is the shift of the distribution
             boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
         else:
-            raise NotImplemented
+            raise NotImplementedError
 
         boundaries = self.corrupt_boundaries(boundaries)
 
@@ -150,13 +150,12 @@ class TokenizerBoundaryCreator(BoundaryCreator):
         super().__init__(boundaries_type, **kwargs)
 
         self.extract_offline = True
-        from tokenizer import AutoregressiveTokeniser
         self.tokenizer = AutoregressiveTokeniser(corpus_filepath='',
-                                                save_dir=tokenizer_save_dir,
-                                                tokenizer_type=tokenizer_type,
-                                                dropout=tokenizer_dropout,
-                                                algorithm=tokenizer_algorithm,
-                                                vocab_size=tokenizer_vocab_size)
+                                                 save_dir=tokenizer_save_dir,
+                                                 tokenizer_type=tokenizer_type,
+                                                 dropout=tokenizer_dropout,
+                                                 algorithm=tokenizer_algorithm,
+                                                 vocab_size=tokenizer_vocab_size)
 
     def get_boundaries(self, data):
         """
@@ -175,16 +174,51 @@ class TokenizerBoundaryCreator(BoundaryCreator):
         return self.tokenizer.get_boundaries(data)
 
 
+class NonAutoregressiveBoundaryCreator(BoundaryCreator):
+    def __init__(self, boundaries_type, tokenizer_type, tokenizer_vocab_size, tokenizer_dropout,
+                 tokenizer_save_dir, tokenizer_algorithm, **kwargs):
+        super().__init__(boundaries_type, **kwargs)
+
+        self.extract_offline = True
+        self.tokenizer = AutoregressiveTokeniser(corpus_filepath='',
+                                                 save_dir=tokenizer_save_dir,
+                                                 tokenizer_type=tokenizer_type,
+                                                 dropout=tokenizer_dropout,
+                                                 algorithm=tokenizer_algorithm,
+                                                 vocab_size=tokenizer_vocab_size)
+        self.tokenizer = self.tokenizer.raw_tokenizer
+
+    def get_boundaries(self, data):
+        """
+            Function that generates boundaries for given tensor of data
+            Attributes:
+                data - (str) - just a string which we'd tokenize using tokenizer
+                n_chunks - (int) - tokenizer's output representation is very memory extensive
+                    we can limit the RAM memory used by this boundary extractor
+                    by processing the long text in chunks
+             Returns:
+                 boundaries - (torch.BoolTensor) - [len(data)]
+         """
+
+        boundaries = torch.zeros((len(data), len(data[0])), dtype=torch.bool)
+        encoded_data = self.tokenizer.encode_batch(data)
+
+        for idx, x in enumerate(encoded_data):
+            for a, _ in x.offsets:
+                boundaries[idx, a] = True
+
+        return boundaries
+
+
 class SPMBoundaries(BoundaryCreator):
     def __init__(self, boundaries_type, tokenizer_type, tokenizer_vocab_size,
-                 tokenizer_save_dir, vocab, **kwargs):
+                 tokenizer_save_dir, **kwargs):
         super().__init__(boundaries_type, **kwargs)
         self.extract_offline = False
         filename = self.get_tokenizer_filename(tokenizer_type,
                                                tokenizer_vocab_size)
         filepath = os.path.join(tokenizer_save_dir, 'spm', filename)
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
-        self.vocab = vocab
         self.max_len = 2049
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
@@ -256,7 +290,10 @@ def get_boundary_creator(boundaries_type, **kwargs):
         if kwargs['tokenizer_type'].startswith('spm'):
             return SPMBoundaries(boundaries_type, **kwargs)
         else:
-            return TokenizerBoundaryCreator(boundaries_type, **kwargs)
+            if kwargs['tokenizer_algorithm'] == 'approachna':
+                return NonAutoregressiveBoundaryCreator(boundaries_type, **kwargs)
+            else:
+                return TokenizerBoundaryCreator(boundaries_type, **kwargs)
 
 
 if __name__ == '__main__':

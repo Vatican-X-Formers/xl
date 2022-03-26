@@ -84,7 +84,7 @@ class Vocab(object):
         print('final vocab size {} from {} unique tokens'.format(
             len(self), len(self.counter)))
 
-    def encode_file(self, path, add_eos=True, boundary_creator=None, extract_boundaries=False): 
+    def encode_file(self, path, add_eos=True, boundary_creator=None, extract_boundaries=False):
         print('encoding file {} ...'.format(path))
         assert os.path.exists(path)
 
@@ -98,7 +98,6 @@ class Vocab(object):
             for idx, line in enumerate(f):
                 symbols = self.tokenize(line, add_eos=add_eos)
                 encoded_text.append(self.convert_to_tensor(symbols))
-                
                 if extract_boundaries:
                     line_cleaned = line.replace(' ', '').replace('_', ' ')
                     boundaries.append(boundary_creator.get_boundaries(line_cleaned))

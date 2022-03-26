@@ -307,7 +307,7 @@ def evaluate(eval_iter, model, args, step):
 
     stats_agg = defaultdict(list)
     # Evaluation
-    total_len, total_loss, total_aux_loss = 0, 0., 0.
+    total_len, total_loss = 0, 0.
     with torch.no_grad():
         for i, (data, target, seq_len, boundaries) in enumerate(eval_iter.get_fixlen_iter()):
             data = data.to(eval_iter.device, non_blocking=True)
@@ -629,20 +629,30 @@ def main():
     eval_tgt_lengths = args.eval_tgt_lengths
     eval_total_lengths = args.eval_total_lengths
 
-    tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
-                                  device, args.ext_len, **boundary_kwargs)
+    tr_iter = corpus.get_iterator(split='train',
+                                  bsz=args.batch_size,
+                                  tgt_len=args.tgt_len,
+                                  device=device,
+                                  ext_len=args.ext_len,
+                                  **boundary_kwargs)
 
     va_iters, te_iters = [], []
 
     for eval_tgt_len, eval_total_len in zip(eval_tgt_lengths, eval_total_lengths):
         eval_ext_len = eval_total_len - eval_tgt_len
 
-        va_iter = corpus.get_iterator('valid', args.eval_batch_size,
-                                      eval_tgt_len, device,
-                                      eval_ext_len, **boundary_kwargs)
-        te_iter = corpus.get_iterator('test', args.eval_batch_size,
-                                      eval_tgt_len, device,
-                                      eval_ext_len, **boundary_kwargs)
+        va_iter = corpus.get_iterator(split='valid',
+                                      bsz=args.eval_batch_size,
+                                      tgt_len=eval_tgt_len,
+                                      device=device,
+                                      ext_len=eval_ext_len,
+                                      **boundary_kwargs)
+        te_iter = corpus.get_iterator(split='test',
+                                      bsz=args.eval_batch_size,
+                                      tgt_len=eval_tgt_len,
+                                      device=device,
+                                      ext_len=eval_ext_len,
+                                      **boundary_kwargs)
         va_iters.append(va_iter)
         te_iters.append(te_iter)
 
