@@ -25,8 +25,13 @@ then
     ARGS+=" --debug"
 fi
 
+if [ -z "$C" ]
+then
+    C=./configs/small.yaml
+fi
+
 echo 'Finding free port'
 PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
 
 echo 'Run training...'
-python -m torch.distributed.launch --master_port=$PORT --nproc_per_node="$2" train.py --config_file "$1" $ARGS
+python -m torch.distributed.launch --master_port=$PORT --nproc_per_node="$1" train.py --config_file "$C" $ARGS
