@@ -37,9 +37,6 @@ class LMOrderedIterator(object):
         self.vocab = vocab
         self.device = device
 
-        # Data is a tuple, the data tensor and boundaries from boundaries
-        data, boundaries = data
-
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = len(data) // bsz
 
@@ -57,18 +54,12 @@ class LMOrderedIterator(object):
         data = [data[i:i + n_step] for i in range(0, len(data), n_step)]
         self.data = data
 
-        if boundaries is not None:
-            boundaries = boundaries[:n_step * bsz]
-            self.boundaries = boundaries.view(bsz, -1).t().contiguous().pin_memory()
-            self.boundaries = self.boundaries.chunk(world_size, dim=1)[rank]
-        else:
-            assert boundary_creator is not None
-            self.boundaries = None
-            if boundary_creator.boundaries_type in ['space_dist', 'normal']:
-                print('Special case, for random boundaries we want to sample them once')
-                self.boundaries = boundary_creator.get_boundaries(self.data).transpose(0, 1)
-
+        assert boundary_creator is not None
         self.boundary_creator = boundary_creator
+        self.boundaries = None
+        if boundary_creator.boundaries_type in ['space_dist', 'normal']:
+            print('Special case, for random boundaries we want to sample them once')
+            self.boundaries = boundary_creator.get_boundaries(self.data).transpose(0, 1)
 
         # Number of mini-batches
         self.data_len = len(data[0])
@@ -94,20 +85,13 @@ class LMOrderedIterator(object):
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
 
-        if True:
-            current_batch = [self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))]
-            boundaries = self.boundary_creator.get_boundaries(current_batch).t().bool().contiguous()[:-1, :]
-            data = [self.vocab.convert_to_tensor(current_batch[i].replace(' ',
-                                                                          '_')).unsqueeze(1) for i in range(batch_size)]
-            data = torch.cat(data, dim=1).long().contiguous()
-            target = data[1:, :]
-            data = data[:-1, :]
-        else:
-            # na pozniej
-            data, target, boundaries = self.boundary_creator.get_boundaries([self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))])
-            data = torch.tensor(np.concatenate(data)).reshape(batch_size, -1).t().long().contiguous()
-            target = torch.tensor(np.concatenate(target)).reshape(batch_size, -1).t().long().contiguous()
-            boundaries = torch.tensor(np.concatenate(boundaries)).reshape(batch_size, -1).t().bool().contiguous()
+        current_batch = [self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))]
+        boundaries = self.boundary_creator.get_boundaries(current_batch).t().bool().contiguous()[:-1, :]
+        data = [self.vocab.convert_to_tensor(current_batch[i].replace(' ',
+                                                                      '_')).unsqueeze(1) for i in range(batch_size)]
+        data = torch.cat(data, dim=1).long().contiguous()
+        target = data[1:, :]
+        data = data[:-1, :]
 
         return data, target, seq_len, boundaries
 
@@ -120,7 +104,7 @@ class LMOrderedIterator(object):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=0
+            num_workers=4
         )
 
 
@@ -140,7 +124,7 @@ class Corpus(object):
             assert len(sents) == 1
             sent = sents[0].replace(' ', '').replace('_', ' ')
 
-            self.data[split] = sent, None
+            self.data[split] = sent
 
         self.vocab.build_vocab()
 

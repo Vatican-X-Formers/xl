@@ -163,14 +163,10 @@ class TokenizerBoundaryCreator(BoundaryCreator):
 
             Attributes:
                 data - (str) - just a string which we'd tokenize using tokenizer
-                n_chunks - (int) - tokenizer's output representation is very memory extensive
-                    we can limit the RAM memory used by this boundary extractor
-                    by processing the long text in chunks
 
             Returns:
                 boundaries - (torch.BoolTensor) - [len(data)]
         """
-        print('this shit started')
         return self.tokenizer.get_boundaries(data)
 
 
@@ -193,9 +189,6 @@ class NonAutoregressiveBoundaryCreator(BoundaryCreator):
             Function that generates boundaries for given tensor of data
             Attributes:
                 data - (str) - just a string which we'd tokenize using tokenizer
-                n_chunks - (int) - tokenizer's output representation is very memory extensive
-                    we can limit the RAM memory used by this boundary extractor
-                    by processing the long text in chunks
              Returns:
                  boundaries - (torch.BoolTensor) - [len(data)]
          """
@@ -203,6 +196,8 @@ class NonAutoregressiveBoundaryCreator(BoundaryCreator):
         boundaries = torch.zeros((len(data), len(data[0])), dtype=torch.bool)
         encoded_data = self.tokenizer.encode_batch(data)
 
+        # HF tokenizer don't strip space in the end and tokenises it properly
+        # No hacks needed
         for idx, x in enumerate(encoded_data):
             for a, _ in x.offsets:
                 boundaries[idx, a] = True
@@ -219,36 +214,13 @@ class SPMBoundaries(BoundaryCreator):
                                                tokenizer_vocab_size)
         filepath = os.path.join(tokenizer_save_dir, 'spm', filename)
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
-        self.max_len = 2049
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
         assert tokenizer_type.startswith('spm')
         filename = f'{tokenizer_type}-{vocab_size}.model'
         return filename
 
-    def get_tensors(self, pieces):
-        data = np.zeros(self.max_len)
-        boundaries = np.zeros(self.max_len)
-        acc_idx = 0
-        for piece in pieces:
-            boundaries[acc_idx] = 1
-            for c in piece:
-                if c != '▁':
-                    data[acc_idx] = ord(c) - ord('a')
-                else:
-                    data[acc_idx] = 26
-                acc_idx += 1
-
-        target = data[1:acc_idx]
-        data = data[:acc_idx - 1]
-        boundaries = boundaries[:acc_idx - 1]
-
-        # data = data.to(self.device, non_blocking=True)
-        # target = target.to(self.device, non_blocking=True)
-        # boundaries = boundaries.to(self.device, non_blocking=True)
-        return data, target, boundaries
-
-    def get_boundaries(self, data):
+    def get_boundaries(self, data, add_symbols=False, top_n=1):
         """
             Function that generates boundaries for given tensor of data
 
@@ -259,15 +231,29 @@ class SPMBoundaries(BoundaryCreator):
                 boundaries - (torch.BoolTensor) - [batch_size x seq_len]
         """
         encoded_texts = self.tokenizer.encode(data, out_type=str)
-        for i in range(len(data)):
+
+        batch_size = len(data)
+        pieces_lengths = []
+
+        for i in range(batch_size):
+            # Hacks to correct behaviour of external tokenizers
             if data[i][0] != ' ':
                 assert encoded_texts[i][0].startswith('▁')
                 encoded_texts[i][0] = encoded_texts[i][0][1:]
             if data[i][-1] == ' ':
                 encoded_texts[i].append('▁')
-        out = list(map(self.get_tensors, encoded_texts))
-        data, target, boundaries = zip(*out)
-        return data, target, boundaries
+
+            pieces_lengths.append(torch.tensor([len(x) for x in encoded_texts[i]]))
+
+        lengths = [x.sum() for x in pieces_lengths]
+        max_len = max(lengths)
+        boundaries = torch.zeros(batch_size, max_len)
+
+        for i in range(batch_size):
+            boundaries[i, 0] = 1
+            boundaries[i, pieces_lengths[i].cumsum(dim=0)[:-1]] = 1
+
+        return boundaries
 
 
 def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
