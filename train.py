@@ -309,7 +309,10 @@ def evaluate(eval_iter, model, args, step):
     # Evaluation
     total_len, total_loss, total_aux_loss = 0, 0., 0.
     with torch.no_grad():
-        for i, (data, target, seq_len, boundaries) in enumerate(eval_iter):
+        for i, (data, target, seq_len, boundaries) in enumerate(eval_iter.get_fixlen_iter()):
+            data = data.to(eval_iter.device, non_blocking=True)
+            target = target.to(eval_iter.device, non_blocking=True)
+            boundaries = boundaries.to(eval_iter.device, non_blocking=True)
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             loss, stats, aux_loss = model(data, target, boundaries, step=step)

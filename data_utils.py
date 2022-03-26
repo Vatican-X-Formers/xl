@@ -96,10 +96,10 @@ class LMOrderedIterator(object):
         data, target, boundaries = out
         n_examples = len(self.data)
         data = torch.tensor(np.concatenate(data)).reshape(n_examples,
-                                                          -1).t().long()
+                                                          -1).t().long().contiguous()
         target = torch.tensor(np.concatenate(target)).reshape(n_examples,
-                                                              -1).t().long()
-        boundaries = torch.tensor(np.concatenate(boundaries)).reshape(n_examples, -1).t().bool()
+                                                              -1).t().long().contiguous()
+        boundaries = torch.tensor(np.concatenate(boundaries)).reshape(n_examples, -1).t().bool().contiguous()
 
         return data, target, seq_len, boundaries
 
@@ -114,9 +114,6 @@ class LMOrderedIterator(object):
             collate_fn=self.get_batch,
             num_workers=0
         )
-
-    def __iter__(self):
-        return self.get_fixlen_iter()
 
 
 class Corpus(object):
@@ -146,7 +143,7 @@ class Corpus(object):
 
     def get_iterator(self, split, *args, **kwargs):
         kwargs = self.extend_kwargs_for_bc(**kwargs)
-        return LMOrderedIterator(self.data[split], boundary_creator=get_boundary_creator(**kwargs), *args)
+        return LMOrderedIterator(self.data[split], *args, boundary_creator=get_boundary_creator(**kwargs))
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
