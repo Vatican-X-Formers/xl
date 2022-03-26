@@ -464,7 +464,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
         stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
 
         # if run and train_step % args.text_generation_interval == 0:
-        #     generated_sample = sample_generation(vocab, model, args)
+        #     generated_sample =sample_generation(vocab, model, args)
         #     run['gen/text'].log(generated_sample)
         # Finish of custom statistics
 
