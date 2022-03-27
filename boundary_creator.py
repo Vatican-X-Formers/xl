@@ -180,13 +180,14 @@ class NonAutoregressiveBoundaryCreator(BoundaryCreator):
         super().__init__(boundaries_type, **kwargs)
 
         self.extract_offline = True
-        self.tokenizer = AutoregressiveTokeniser(corpus_filepath='',
-                                                 save_dir=tokenizer_save_dir,
-                                                 tokenizer_type=tokenizer_type,
-                                                 dropout=tokenizer_dropout,
-                                                 algorithm=tokenizer_algorithm,
-                                                 vocab_size=tokenizer_vocab_size)
-        self.tokenizer = self.tokenizer.raw_tokenizer
+        tokenizer_path = self.get_tokenizer_filename(tokenizer_type,
+                                                     tokenizer_vocab_size)
+        tokenizer_path = os.path.join(tokenizer_save_dir, 'json', tokenizer_path)
+        self.tokenizer = Tokenizer.from_file(tokenizer_path)
+
+    def get_tokenizer_filename(self, tokenizer_type, vocab_size):
+        filename = f'{tokenizer_type}-{vocab_size}.json'
+        return filename
 
     def get_boundaries(self, txt=None, tensor=None):
         """
