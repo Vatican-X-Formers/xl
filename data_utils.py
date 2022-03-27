@@ -89,7 +89,7 @@ class LMOrderedIterator(object):
         data = [self.vocab.convert_to_tensor(current_batch[i].replace(' ',
                                                                       '_')).unsqueeze(1) for i in range(batch_size)]
         data = torch.cat(data, dim=1).long().contiguous()
-        target = data[1:, :]
+        target = data[1:1 + seq_len, :]
         boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
                                                           tensor=data).t().bool().contiguous()[:-1, :]
         data = data[:-1, :]
