@@ -97,7 +97,7 @@ class BoundaryCreator():
 
         return boundaries | ((z % self.max_group_length) == 0)
 
-    def get_boundaries(self, data):
+    def get_boundaries(self, txt=None, tensor=None):
         """
             Function that generates boundaries for given tensor of data
 
@@ -107,6 +107,8 @@ class BoundaryCreator():
             Returns:
                 boundaries - (torch.BoolTensor) - [batch_size x seq_len]
         """
+        assert tensor is not None
+        data = tensor
 
         if self.boundaries_type == 'noboundaries':
             return None
@@ -157,7 +159,7 @@ class TokenizerBoundaryCreator(BoundaryCreator):
                                                  algorithm=tokenizer_algorithm,
                                                  vocab_size=tokenizer_vocab_size)
 
-    def get_boundaries(self, data):
+    def get_boundaries(self, txt=None, tensor=None):
         """
             Function that generates boundaries for given tensor of data
 
@@ -167,6 +169,8 @@ class TokenizerBoundaryCreator(BoundaryCreator):
             Returns:
                 boundaries - (torch.BoolTensor) - [len(data)]
         """
+        assert txt is not None
+        data = txt
         return self.tokenizer.get_boundaries(data)
 
 
@@ -184,7 +188,7 @@ class NonAutoregressiveBoundaryCreator(BoundaryCreator):
                                                  vocab_size=tokenizer_vocab_size)
         self.tokenizer = self.tokenizer.raw_tokenizer
 
-    def get_boundaries(self, data):
+    def get_boundaries(self, txt=None, tensor=None):
         """
             Function that generates boundaries for given tensor of data
             Attributes:
@@ -193,6 +197,8 @@ class NonAutoregressiveBoundaryCreator(BoundaryCreator):
                  boundaries - (torch.BoolTensor) - [len(data)]
          """
 
+        assert txt is not None
+        data = txt
         boundaries = torch.zeros((len(data), len(data[0])), dtype=torch.bool)
         encoded_data = self.tokenizer.encode_batch(data)
 
@@ -220,7 +226,7 @@ class SPMBoundaries(BoundaryCreator):
         filename = f'{tokenizer_type}-{vocab_size}.model'
         return filename
 
-    def get_boundaries(self, data, add_symbols=False, top_n=1):
+    def get_boundaries(self, txt=None, tensor=None, add_symbols=False, top_n=1):
         """
             Function that generates boundaries for given tensor of data
 
@@ -230,6 +236,8 @@ class SPMBoundaries(BoundaryCreator):
             Returns:
                 boundaries - (torch.BoolTensor) - [batch_size x seq_len]
         """
+        assert txt is not None
+        data = txt
         encoded_texts = self.tokenizer.encode(data, out_type=str)
 
         batch_size = len(data)

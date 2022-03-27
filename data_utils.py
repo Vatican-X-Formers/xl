@@ -86,11 +86,12 @@ class LMOrderedIterator(object):
         beg_idx = max(0, i - self.ext_len)
 
         current_batch = [self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))]
-        boundaries = self.boundary_creator.get_boundaries(current_batch).t().bool().contiguous()[:-1, :]
         data = [self.vocab.convert_to_tensor(current_batch[i].replace(' ',
                                                                       '_')).unsqueeze(1) for i in range(batch_size)]
         data = torch.cat(data, dim=1).long().contiguous()
         target = data[1:, :]
+        boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
+                                                          tensor=data).t().bool().contiguous()[:-1, :]
         data = data[:-1, :]
 
         return data, target, seq_len, boundaries
@@ -128,11 +129,8 @@ class Corpus(object):
 
         self.vocab.build_vocab()
 
-        kwargs = self.extend_kwargs_for_bc(**kwargs)
-        self.boundary_creator = get_boundary_creator(**kwargs)
-
     def extend_kwargs_for_bc(self, **kwargs):
-        kwargs['boundary_ids'] = []
+        kwargs['boundary_ids'] = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
         return kwargs
 
     def get_iterator(self, split, **kwargs):
