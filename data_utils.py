@@ -85,11 +85,11 @@ class LMOrderedIterator(object):
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
 
-        current_batch = [self.data[i][beg_idx:end_idx + 1] for i in range(len(self.data))]
-        data = [self.vocab.convert_to_tensor(current_batch[i].replace(' ',
-                                                                      '_')).unsqueeze(1) for i in range(batch_size)]
+        current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
+        data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ',
+                                                                      '_')).unsqueeze(1) for j in range(batch_size)]
         data = torch.cat(data, dim=1).long().contiguous()
-        target = data[1:1 + seq_len, :]
+        target = data[-seq_len:]
         boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
                                                           tensor=data).t().bool().contiguous()[:-1, :]
         data = data[:-1, :]
