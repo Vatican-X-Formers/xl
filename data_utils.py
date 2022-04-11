@@ -86,15 +86,24 @@ class LMOrderedIterator(object):
         beg_idx = max(0, i - self.ext_len)
 
         current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
-        data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ',
-                                                                      '_')).unsqueeze(1) for j in range(batch_size)]
-        data = torch.cat(data, dim=1).long().contiguous()
-        target = data[-seq_len:]
-        boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
-                                                          tensor=data).t().bool().contiguous()[:-1, :]
+        data, boundaries, lengths = self.boundary_creator.get_boundaries(txt=current_batch, tensor=None)
+        boundaries = boundaries.t().bool().contiguous()[:-1, :]
+
+        tgt_lengths = []
+
+        final_data = torch.zeros(max(lengths), batch_size)
+        for i in range(batch_size):
+            data_tensor = self.vocab.convert_to_tensor(data[i])
+            final_data[:len(data_tensor), i] = data_tensor
+            tmp = data_tensor.flip(dims=[0]) != self.vocab.sym2idx['#']
+            tgt_length = (tmp.cumsum(dim=0) <= seq_len).sum()
+            tgt_lengths.append(tgt_length)
+
+        data = final_data.long().contiguous()
+        target = data[-max(tgt_lengths):]
         data = data[:-1, :]
 
-        return data, target, seq_len, boundaries
+        return data, target, seq_len, boundaries, tgt_lengths
 
     def get_fixlen_iter(self, start=0, shuffle=False):
         dataset = [i for i in range(start, self.data_len - 1, self.tgt_len)]
@@ -105,7 +114,7 @@ class LMOrderedIterator(object):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=4
+            num_workers=0
         )
 
 
@@ -128,6 +137,7 @@ class Corpus(object):
             self.data[split] = sent
 
         self.vocab.build_vocab()
+        self.vocab.add_symbol('#')
 
     def extend_kwargs_for_bc(self, **kwargs):
         kwargs['boundary_ids'] = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]

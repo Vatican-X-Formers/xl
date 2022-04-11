@@ -244,14 +244,26 @@ class SPMBoundaries(BoundaryCreator):
         batch_size = len(data)
         pieces_lengths = []
 
+        data_with_specials = []
+
         for i in range(batch_size):
-            # Hacks to correct behaviour of external tokenizers
+            # Hacks to correct behaviour of spm tokenizer
             if data[i][0] != ' ':
                 assert encoded_texts[i][0].startswith('▁')
                 encoded_texts[i][0] = encoded_texts[i][0][1:]
             if data[i][-1] == ' ':
                 encoded_texts[i].append('▁')
 
+            pieces = []
+
+            for idx, piece in enumerate(encoded_texts[i]):
+                if idx != 0 and not piece.startswith('▁'):
+                    piece = '#' + piece
+                pieces.append(piece)
+
+            encoded_texts[i] = pieces
+
+            data_with_specials.append(''.join(pieces).replace('▁', '_'))
             pieces_lengths.append(torch.tensor([len(x) for x in encoded_texts[i]]))
 
         lengths = [x.sum() for x in pieces_lengths]
@@ -262,7 +274,7 @@ class SPMBoundaries(BoundaryCreator):
             boundaries[i, 0] = 1
             boundaries[i, pieces_lengths[i].cumsum(dim=0)[:-1]] = 1
 
-        return boundaries
+        return data_with_specials, boundaries, lengths
 
 
 def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
