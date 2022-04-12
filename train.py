@@ -176,6 +176,7 @@ def parse_args():
     val = parser.add_argument_group('validation setup')
     val.add_argument('--eval_tgt_lengths', nargs="+")
     val.add_argument('--eval_total_lengths', nargs="+")
+    val.add_argument('--eval_topn', type=int, default=-1)
     val.add_argument('--eval_batch_size', type=int, default=16,
                      help='Eval batch size')
     val.add_argument('--eval_max_steps', type=int, default=-1,
@@ -309,20 +310,34 @@ def evaluate(eval_iter, model, args, step):
     # Evaluation
     total_len, total_loss = 0, 0.
     with torch.no_grad():
-        for i, (data, target, seq_len, boundaries) in enumerate(eval_iter.get_fixlen_iter()):
-            data = data.to(eval_iter.device, non_blocking=True)
-            target = target.to(eval_iter.device, non_blocking=True)
-            boundaries = boundaries.to(eval_iter.device, non_blocking=True)
-            if args.eval_max_steps > 0 and i >= args.eval_max_steps:
-                break
-            loss, stats, aux_loss = model(data, target, boundaries, step=step)
-            loss = loss.float().mean().type_as(loss)
+        for i, topn in enumerate(eval_iter.get_fixlen_iter()):
+            results = []
 
-            total_loss += seq_len * loss.item()
+            for j, (data, target, seq_len, boundaries, lengths) in enumerate(topn):
+                data = data.to(eval_iter.device, non_blocking=True)
+                target = target.to(eval_iter.device, non_blocking=True)
+                boundaries = boundaries.to(eval_iter.device, non_blocking=True)
+
+                seq_loss, stats, aux_loss = model(data, target, boundaries, step=step)
+
+                assert aux_loss.item() == 0
+
+                y = torch.arange(max(lengths), device=seq_loss.device)[:, None].repeat(1, len(lengths)) < torch.tensor(lengths, device=seq_loss.device).unsqueeze(0)
+
+                tensor_losses = torch.zeros(len(lengths))
+                for k in range(len(lengths)):
+                    tensor_losses[k] = seq_loss[y[:, k],
+                                                k].float().sum().item()
+
+                results.append(tensor_losses)
+                result = -torch.logsumexp(-torch.stack(results), 0)
+                result = result.sum().item() / len(lengths)
+
+                stats_agg[f'logsumexp_{j}'].append(result)
+
+            # Znormalizuj przez liczbe el w batchu
+            total_loss += result
             total_len += seq_len
-
-            for k, v in stats.items():
-                stats_agg[k].append(v)
 
     model.train()
 
@@ -378,9 +393,10 @@ def get_boundary_config(args):
 
 
 def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
-                    args, step):
+                    lengths_chunks, seq_len, args, step):
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
+    lengths_i = lengths_chunks[i]
 
     if boundaries_chunks is not None:
         boundaries_i = boundaries_chunks[i].contiguous()
@@ -389,9 +405,12 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
     seq_loss, stats, aux_loss = model(data_i, target_i,
                                       boundaries=boundaries_i, step=step)
-    seq_loss = seq_loss.float().mean().type_as(seq_loss)
+    assert aux_loss.item() == 0
+    max_len = max([x for sub in lengths_chunks for x in sub])
+    y = torch.arange(max_len, device=seq_loss.device)[:, None].repeat(1, len(lengths_i)) < \
+                    torch.tensor(lengths_i, device=seq_loss.device).unsqueeze(0)
+    seq_loss = seq_loss[y].float().sum() / seq_len / len(lengths_i)
     total_loss = (seq_loss + aux_loss) / args.batch_chunk
-
     total_loss.backward()
 
     return seq_loss.item() / args.batch_chunk, stats
@@ -424,7 +443,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     log_start_time = time.time()
     train_iter = tr_iter.get_fixlen_iter(start=last_iter, shuffle=args.shuffle)
 
-    for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
+    for batch, (data, target, seq_len, boundaries, lengths) in enumerate(train_iter, start=1):
         data = data.to(tr_iter.device, non_blocking=True)
         target = target.to(tr_iter.device, non_blocking=True)
         boundaries = boundaries.to(tr_iter.device, non_blocking=True)
@@ -441,17 +460,22 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
         else:
             boundaries_chunks = None
 
+        chunk_step = len(lengths) // args.batch_chunk
+        lengths_chunks = [lengths[i:i + chunk_step] for i in range(0,
+                                                                   len(lengths),
+                                                                   chunk_step)]
+
         for i in range(args.batch_chunk):
             if i < args.batch_chunk - 1 and isinstance(model, DistributedDataParallel):
                 with model.no_sync():
                     train_loss_chunk, stats = train_iteration(
                         model, i, data_chunks, target_chunks,
-                        boundaries_chunks, args, train_step
+                        boundaries_chunks, lengths_chunks, seq_len, args, train_step
                     )
             else:
                 train_loss_chunk, stats = train_iteration(
                     model, i, data_chunks, target_chunks, boundaries_chunks,
-                    args, train_step
+                    lengths_chunks, seq_len, args, train_step
                 )
 
             train_loss += train_loss_chunk
@@ -635,6 +659,7 @@ def main():
                                   tgt_len=args.tgt_len,
                                   device=device,
                                   ext_len=args.ext_len,
+                                  topn=-1,
                                   **boundary_kwargs)
 
     va_iters, te_iters = [], []
@@ -647,12 +672,14 @@ def main():
                                       tgt_len=eval_tgt_len,
                                       device=device,
                                       ext_len=eval_ext_len,
+                                      topn=args.eval_topn,
                                       **boundary_kwargs)
         te_iter = corpus.get_iterator(split='test',
                                       bsz=args.eval_batch_size,
                                       tgt_len=eval_tgt_len,
                                       device=device,
                                       ext_len=eval_ext_len,
+                                      topn=args.eval_topn,
                                       **boundary_kwargs)
         va_iters.append(va_iter)
         te_iters.append(te_iter)

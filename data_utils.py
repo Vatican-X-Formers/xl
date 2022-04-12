@@ -26,7 +26,7 @@ from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator
 
 
 class LMOrderedIterator(object):
-    def __init__(self, data, bsz, tgt_len, ext_len, vocab, device,
+    def __init__(self, data, bsz, tgt_len, ext_len, vocab, device, topn,
                  boundary_creator, **kwargs):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
@@ -36,6 +36,7 @@ class LMOrderedIterator(object):
         self.ext_len = ext_len if ext_len is not None else 0
         self.vocab = vocab
         self.device = device
+        self.topn = topn
 
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = len(data) // bsz
@@ -84,26 +85,42 @@ class LMOrderedIterator(object):
 
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
+        assert self.ext_len == 0
 
         current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
-        data, boundaries, lengths = self.boundary_creator.get_boundaries(txt=current_batch, tensor=None)
-        boundaries = boundaries.t().bool().contiguous()[:-1, :]
 
-        tgt_lengths = []
+        topn = []
+        assert self.topn == -1 or self.topn > 0
 
-        final_data = torch.zeros(max(lengths), batch_size)
-        for i in range(batch_size):
-            data_tensor = self.vocab.convert_to_tensor(data[i])
-            final_data[:len(data_tensor), i] = data_tensor
-            tmp = data_tensor.flip(dims=[0]) != self.vocab.sym2idx['#']
-            tgt_length = (tmp.cumsum(dim=0) <= seq_len).sum()
-            tgt_lengths.append(tgt_length)
+        for i in range(max(1, self.topn)):
+            current_topn = i + 1 if self.topn > 0 else -1
+            data, boundaries, lengths = self.boundary_creator.get_boundaries(txt=current_batch,
+                                                                             tensor=None,
+                                                                             topn=current_topn)
 
-        data = final_data.long().contiguous()
-        target = data[-max(tgt_lengths):]
-        data = data[:-1, :]
+            final_data = torch.zeros(max(lengths), batch_size)
 
-        return data, target, seq_len, boundaries, tgt_lengths
+            for i in range(batch_size):
+                data_tensor = self.vocab.convert_to_tensor(data[i])
+                assert data_tensor[0] != self.vocab.sym2idx['#']
+                assert data_tensor[-1] != self.vocab.sym2idx['#']
+                final_data[:len(data_tensor), i] = data_tensor
+                # tmp = data_tensor.flip(dims=[0]) != self.vocab.sym2idx['#']
+                # tgt_length = (tmp.cumsum(dim=0) <= seq_len).sum()
+                # tgt_lengths.append(tgt_length)
+
+            data = final_data.long().contiguous()
+            target = data[1:, :]
+            data = data[:-1, :]
+            boundaries = boundaries.t().bool().contiguous()[:-1, :]
+            lengths = [x - 1 for x in lengths]
+
+            if self.topn == -1:
+                return data, target, seq_len, boundaries, lengths
+            else:
+                topn.append((data, target, seq_len, boundaries, lengths))
+
+        return topn
 
     def get_fixlen_iter(self, start=0, shuffle=False):
         dataset = [i for i in range(start, self.data_len - 1, self.tgt_len)]

@@ -227,7 +227,7 @@ class SPMBoundaries(BoundaryCreator):
         filename = f'{tokenizer_type}-{vocab_size}.model'
         return filename
 
-    def get_boundaries(self, txt=None, tensor=None, add_symbols=False, top_n=1):
+    def get_boundaries(self, txt=None, tensor=None, add_symbols=False, topn=-1):
         """
             Function that generates boundaries for given tensor of data
 
@@ -239,7 +239,10 @@ class SPMBoundaries(BoundaryCreator):
         """
         assert txt is not None
         data = txt
-        encoded_texts = self.tokenizer.encode(data, out_type=str)
+        if topn == -1:
+            encoded_texts = self.tokenizer.encode(data, out_type=str)
+        else:
+            encoded_texts = [self.tokenizer.nbest_encode_as_pieces(data[i], topn)[-1] for i in range(len(data))]
 
         batch_size = len(data)
         pieces_lengths = []
@@ -251,6 +254,8 @@ class SPMBoundaries(BoundaryCreator):
             if data[i][0] != ' ':
                 assert encoded_texts[i][0].startswith('▁')
                 encoded_texts[i][0] = encoded_texts[i][0][1:]
+                if encoded_texts[i][0] == '':
+                    encoded_texts[i] = encoded_texts[i][1:]
             if data[i][-1] == ' ':
                 encoded_texts[i].append('▁')
 
@@ -266,7 +271,7 @@ class SPMBoundaries(BoundaryCreator):
             data_with_specials.append(''.join(pieces).replace('▁', '_'))
             pieces_lengths.append(torch.tensor([len(x) for x in encoded_texts[i]]))
 
-        lengths = [x.sum() for x in pieces_lengths]
+        lengths = [x.sum().item() for x in pieces_lengths]
         max_len = max(lengths)
         boundaries = torch.zeros(batch_size, max_len)
 
