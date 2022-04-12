@@ -240,7 +240,8 @@ class SPMBoundaries(BoundaryCreator):
         assert txt is not None
         data = txt
         if topn == -1:
-            encoded_texts = self.tokenizer.encode(data, out_type=str)
+            encoded_texts = self.tokenizer.encode(data, enable_sampling=True,
+                                                  alpha=0.8, nbest_size=-1, out_type=str)
         else:
             encoded_texts = [self.tokenizer.nbest_encode_as_pieces(data[i], topn)[-1] for i in range(len(data))]
 
