@@ -352,13 +352,15 @@ class BoundaryPredictor(nn.Module):
                 nn.Linear(d_model, d_inner),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
-                nn.Linear(d_inner, 1),
+                nn.Linear(d_inner, 2),
             )
 
         if mode == 'default':
             self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
         elif mode in ['equalize']:
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
+        elif mode == 'rl':
+            pass
 
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
@@ -376,6 +378,11 @@ class BoundaryPredictor(nn.Module):
             positive_loss = loss[boundaries_gt].mean()
             negative_loss = loss[~boundaries_gt].mean()
             loss = negative_loss + positive_loss * self.weight
+        elif self.mode == 'rl':
+            logits = self.boundary_predictor(hidden)
+            policy = torch.distributions.categorical.Categorical(logits=logits)
+            preds = policy.sample().bool()
+            loss = policy.log_prob(preds)
 
         TP = ((preds == boundaries_gt) & preds).sum().item()
         FP = ((preds != boundaries_gt) & preds).sum().item()
@@ -546,12 +553,6 @@ class MemTransformerLM(nn.Module):
         # tgt_len = target.size(0)
         tgt_len = target.size(0) if target is not None else data.size(0)
 
-        # Create masks out of boundary vector
-        downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
-
-        if 'shortened_length' in self.gather_stats:
-            stats['shortened_length'] = downsampling_mask.size(2)
-
         # Token_ids to vector embeddings
         # T x B x C
         word_emb = self.word_emb(data)
@@ -559,7 +560,7 @@ class MemTransformerLM(nn.Module):
 
         mems_index = 0
         loss_boundaries = torch.tensor(0, dtype=data.dtype, device=data.device)
-        residual = None
+        upsampling_mask, residual = None, None
 
         for i in range(len(self.layers)):
             layers = self.layers[i]
@@ -574,7 +575,6 @@ class MemTransformerLM(nn.Module):
                     boundaries_preds, loss_boundaries, acc_boundaries, \
                         precision, recall, _ = self.boundary_predictor(hidden, boundaries)
                     stats['acc_boundaries'] = acc_boundaries
-                    stats['loss_boundaries'] = loss_boundaries.item()
                     stats['precision'] = precision
                     stats['recall'] = recall
                     if step >= self.bp_switch_step:
@@ -606,6 +606,8 @@ class MemTransformerLM(nn.Module):
 
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
+            loss_boundaries = -loss_boundaries.mean() * loss.mean()
+            stats['loss_boundaries'] = loss_boundaries.item()
 
             return loss, stats, loss_boundaries
         else:
