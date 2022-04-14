@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pdb
+import numpy as np
 
 
 @torch.jit.script
@@ -609,6 +610,8 @@ class MemTransformerLM(nn.Module):
 
             boundaries_preds = boundaries_preds[-tgt_len:]
             boundaries = boundaries[-tgt_len:]
+
+            total = (loss >= np.percentile(loss.cpu().detach().numpy(), 90)) | total
 
             loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds, total)
             acc, prec, recall = self.boundary_predictor.calc_stats(boundaries, total)
