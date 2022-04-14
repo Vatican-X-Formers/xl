@@ -606,6 +606,10 @@ class MemTransformerLM(nn.Module):
                                           ), left])
             # total are better then their left
             total[:-1, :] &= right
+
+            boundaries_preds = boundaries_preds[-tgt_len:]
+            boundaries = boundaries[-tgt_len:]
+
             loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds, total)
             acc, prec, recall = self.boundary_predictor.calc_stats(boundaries, total)
 
