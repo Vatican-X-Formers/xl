@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pdb
+import numpy as np
 
 
 @torch.jit.script
@@ -402,9 +403,11 @@ class MemTransformerLM(nn.Module):
                  gather_stats=[], bp_mode='none', bp_capacity='none',
                  bp_weight=0.0, bp_switch_step=0,
                  rl_loss_combine='none',
+                 percentile=80,
                  ):
         super(MemTransformerLM, self).__init__()
         self.rl_loss_combine = rl_loss_combine
+        self.percentile = percentile
         self.n_token = n_token
 
         self.d_model = d_model
@@ -599,13 +602,8 @@ class MemTransformerLM(nn.Module):
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            right = (loss[:-1, :] > loss[1:, :])
-            left = (loss[1:, :] > loss[:-1, :])
-            total = torch.cat([torch.ones((1, left.size(1)),
-                                          device=left.device, dtype=left.dtype
-                                          ), left])
-            # total are better then their left
-            total[:-1, :] &= right
+            total = loss >= np.percentile(loss.cpu().detach().numpy(), self.percentile)
+
             loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds, total)
             acc, prec, recall = self.boundary_predictor.calc_stats(boundaries, total)
 
