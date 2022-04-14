@@ -559,6 +559,8 @@ class MemTransformerLM(nn.Module):
         loss_boundaries = torch.tensor(0, dtype=data.dtype, device=data.device)
         upsampling_mask, residual = None, None
 
+        boundaries_spaces = boundaries
+
         for i in range(len(self.layers)):
             layers = self.layers[i]
 
@@ -609,6 +611,9 @@ class MemTransformerLM(nn.Module):
 
             boundaries_preds = boundaries_preds[-tgt_len:]
             boundaries = boundaries[-tgt_len:]
+
+            boundaries_spaces = boundaries_spaces[-tgt_len:]
+            total = total | boundaries_spaces
 
             loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds, total)
             acc, prec, recall = self.boundary_predictor.calc_stats(boundaries, total)
