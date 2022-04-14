@@ -352,7 +352,7 @@ class BoundaryPredictor(nn.Module):
                 nn.Linear(d_model, d_inner),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
-                nn.Linear(d_inner, 2),
+                nn.Linear(d_inner, 1),
             )
 
         if mode == 'default':
@@ -365,39 +365,32 @@ class BoundaryPredictor(nn.Module):
     def forward(self, hidden, boundaries_gt=None):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
+
         if self.mode in ['default']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
-            loss = self.loss(preds, boundaries_gt.float())
 
-            preds = torch.sigmoid(preds) >= self.threshold
-        elif self.mode in ['equalize']:
-            preds = self.boundary_predictor(hidden).squeeze(-1)
-            loss = self.loss(preds, boundaries_gt.float())
-            preds = torch.sigmoid(preds) >= self.threshold
+        return preds
 
-            positive_loss = loss[boundaries_gt].mean()
-            negative_loss = loss[~boundaries_gt].mean()
-            loss = negative_loss + positive_loss * self.weight
-        elif self.mode == 'rl':
-            logits = self.boundary_predictor(hidden)
-            policy = torch.distributions.categorical.Categorical(logits=logits)
-            preds = policy.sample().bool()
-            loss = policy.log_prob(preds)
-            bias = ((torch.exp(policy.logits)[:, :, 1].sum()) - (hidden.size(0) * hidden.size(1) * 0.25)) / (hidden.size(0) * hidden.size(1))
-            bias = torch.abs(bias)
+    def discretize(self, preds):
+        return torch.sigmoid(preds) >= self.threshold
 
-        TP = ((preds == boundaries_gt) & preds).sum().item()
-        FP = ((preds != boundaries_gt) & preds).sum().item()
-        FN = ((preds != boundaries_gt) & (~preds)).sum().item()
+    def calc_stats(self, preds, gt):
+        TP = ((preds == gt) & preds).sum().item()
+        FP = ((preds != gt) & preds).sum().item()
+        FN = ((preds != gt) & (~preds)).sum().item()
 
-        acc = (preds == boundaries_gt).sum().item() / boundaries_gt.numel()
+        acc = (preds == gt).sum().item() / gt.numel()
+
         if TP == 0:
             precision, recall = 0, 0
         else:
             precision = TP / (TP + FP)
             recall = TP / (TP + FN)
 
-        return preds, loss, bias, acc, precision, recall
+        return acc, precision, recall
+
+    def calc_loss(self, preds, gt):
+        return self.loss(preds, gt.float())
 
 
 class MemTransformerLM(nn.Module):
@@ -576,16 +569,11 @@ class MemTransformerLM(nn.Module):
                                 boundaries=boundaries)
             elif isinstance(layers, Downsampler):
                 if getattr(self, 'boundary_predictor', None) is not None:
-                    boundaries_preds, loss_boundaries, bias, \
-                        acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
-                    stats['acc_boundaries'] = acc_boundaries
-                    stats['precision'] = precision
-                    stats['recall'] = recall
-                    if step >= self.bp_switch_step:
-                        boundaries = boundaries_preds
-                        downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
-                        if 'shortened_length' in self.gather_stats:
-                            stats['shortened_length'] = downsampling_mask.size(2)
+                    boundaries_preds = self.boundary_predictor(hidden, boundaries)
+                    boundaries = self.boundary_predictor.discretize(boundaries_preds)
+                    downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+                    if 'shortened_length' in self.gather_stats:
+                        stats['shortened_length'] = downsampling_mask.size(2)
 
                 residual = hidden
                 hidden = layers(hidden, downsampling_mask=downsampling_mask,
@@ -611,24 +599,20 @@ class MemTransformerLM(nn.Module):
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            loss_mean, loss_std = loss.mean(), loss.std()
-            normalised_loss = (loss - loss_mean) / loss_std
+            right = (loss[:-1, :] > loss[1:, :])
+            left = (loss[1:, :] > loss[:-1, :])
+            total = torch.cat([torch.ones((1, left.size(1)),
+                                          device=left.device, dtype=left.dtype
+                                          ), left])
+            # total are better then their left
+            total[:-1, :] &= right
+            loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds, total)
+            acc, prec, recall = self.boundary_predictor.calc_stats(boundaries, total)
 
-            if self.rl_loss_combine == 'elm':
-                loss_boundaries = (-loss_boundaries * loss).mean()
-            elif self.rl_loss_combine == 'seq':
-                loss_boundaries = -(loss_boundaries * loss.mean(dim=0,
-                                                                keepdim=True)).mean()
-            elif self.rl_loss_combine == 'norm_elm':
-                loss_boundaries = -(loss_boundaries * normalised_loss).mean()
-            elif self.rl_loss_combine == 'norm_seq':
-                loss_boundaries = -(loss_boundaries * normalised_loss.mean(dim=0,
-                                                                           keepdim=True)).mean()
-
+            stats['acc'] = acc
+            stats['precision'] = prec
+            stats['recall'] = recall
             stats['loss_boundaries'] = loss_boundaries.item()
-            stats['bias'] = bias.item()
-
-            loss_boundaries += bias
 
             return loss, stats, loss_boundaries
         else:
