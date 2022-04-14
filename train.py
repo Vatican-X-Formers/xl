@@ -107,6 +107,7 @@ def parse_args():
     model.add_argument('--bp_capacity', type=str, default='none')
     model.add_argument('--bp_weight', type=float, default=1.0)
     model.add_argument('--bp_switch_step', type=int, default=0)
+    model.add_argument('--rl_loss_combine', type=str, default='none')
 
     boundaries = parser.add_argument_group('boundary creator')
     boundaries.add_argument('--move_prob', type=float, default=0.0)
@@ -351,6 +352,7 @@ def gen_model_config(args, vocab):
         'bp_capacity': args.bp_capacity,
         'bp_weight': args.bp_weight,
         'bp_switch_step': args.bp_switch_step,
+        'rl_loss_combine': args.rl_loss_combine,
         }
 
     return model_config

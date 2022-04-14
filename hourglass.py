@@ -383,6 +383,8 @@ class BoundaryPredictor(nn.Module):
             policy = torch.distributions.categorical.Categorical(logits=logits)
             preds = policy.sample().bool()
             loss = policy.log_prob(preds)
+            bias = ((torch.exp(policy.logits)[:, :, 1].sum()) - (hidden.size(0) * hidden.size(1) * 0.25)) / (hidden.size(0) * hidden.size(1))
+            bias = torch.abs(bias)
 
         TP = ((preds == boundaries_gt) & preds).sum().item()
         FP = ((preds != boundaries_gt) & preds).sum().item()
@@ -395,7 +397,7 @@ class BoundaryPredictor(nn.Module):
             precision = TP / (TP + FP)
             recall = TP / (TP + FN)
 
-        return preds, loss, acc, precision, recall, preds.sum(0).max().item()
+        return preds, loss, bias, acc, precision, recall
 
 
 class MemTransformerLM(nn.Module):
@@ -406,8 +408,10 @@ class MemTransformerLM(nn.Module):
                  activation_function='relu',
                  gather_stats=[], bp_mode='none', bp_capacity='none',
                  bp_weight=0.0, bp_switch_step=0,
+                 rl_loss_combine='none',
                  ):
         super(MemTransformerLM, self).__init__()
+        self.rl_loss_combine = rl_loss_combine
         self.n_token = n_token
 
         self.d_model = d_model
@@ -572,8 +576,8 @@ class MemTransformerLM(nn.Module):
                                 boundaries=boundaries)
             elif isinstance(layers, Downsampler):
                 if getattr(self, 'boundary_predictor', None) is not None:
-                    boundaries_preds, loss_boundaries, acc_boundaries, \
-                        precision, recall, _ = self.boundary_predictor(hidden, boundaries)
+                    boundaries_preds, loss_boundaries, bias, \
+                        acc_boundaries, precision, recall = self.boundary_predictor(hidden, boundaries)
                     stats['acc_boundaries'] = acc_boundaries
                     stats['precision'] = precision
                     stats['recall'] = recall
@@ -606,8 +610,25 @@ class MemTransformerLM(nn.Module):
 
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
-            loss_boundaries = -loss_boundaries.mean() * loss.mean()
+
+            loss_mean, loss_std = loss.mean(), loss.std()
+            normalised_loss = (loss - loss_mean) / loss_std
+
+            if self.rl_loss_combine == 'elm':
+                loss_boundaries = (-loss_boundaries * loss).mean()
+            elif self.rl_loss_combine == 'seq':
+                loss_boundaries = -(loss_boundaries * loss.mean(dim=0,
+                                                                keepdim=True)).mean()
+            elif self.rl_loss_combine == 'norm_elm':
+                loss_boundaries = -(loss_boundaries * normalised_loss).mean()
+            elif self.rl_loss_combine == 'norm_seq':
+                loss_boundaries = -(loss_boundaries * normalised_loss.mean(dim=0,
+                                                                           keepdim=True)).mean()
+
             stats['loss_boundaries'] = loss_boundaries.item()
+            stats['bias'] = bias.item()
+
+            loss_boundaries += bias
 
             return loss, stats, loss_boundaries
         else:
