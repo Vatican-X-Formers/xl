@@ -613,11 +613,10 @@ class MemTransformerLM(nn.Module):
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            # TODO Remember to cut it before eval
-
             seq_loss = loss.mean(dim=0, keepdim=True)
             seq_loss = (seq_loss - seq_loss.mean()) / seq_loss.std()
 
+            loss_boundaries = loss_boundaries[-tgt_len:]
             nll_boundaries = loss_boundaries.mean(dim=0, keepdim=True)
 
             if self.rl_loss_combine == '1':
