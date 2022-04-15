@@ -595,8 +595,10 @@ class MemTransformerLM(nn.Module):
                     hidden,
                     layers=layers,
                 )
+
                 if self.pre_lnorm:
                     hidden = self.layer_norms[mems_index](hidden)
+
                 mems_index += 1
 
         hidden = hidden[-tgt_len:]
@@ -611,26 +613,23 @@ class MemTransformerLM(nn.Module):
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            loss_mean, loss_std = loss.mean(), loss.std()
-            normalised_loss = (loss - loss_mean) / loss_std
+            # TODO Remember to cut it before eval
 
-            if self.rl_loss_combine == 'elm':
-                loss_boundaries = (-loss_boundaries * loss).mean()
-            elif self.rl_loss_combine == 'seq':
-                loss_boundaries = -(loss_boundaries * loss.mean(dim=0,
-                                                                keepdim=True)).mean()
-            elif self.rl_loss_combine == 'norm_elm':
-                loss_boundaries = -(loss_boundaries * normalised_loss).mean()
-            elif self.rl_loss_combine == 'norm_seq':
-                loss_boundaries = -(loss_boundaries * normalised_loss.mean(dim=0,
-                                                                           keepdim=True)).mean()
+            seq_loss = loss.mean(dim=0, keepdim=True)
+            seq_loss = (seq_loss - seq_loss.mean()) / seq_loss.std()
+
+            nll_boundaries = loss_boundaries.mean(dim=0, keepdim=True)
+
+            if self.rl_loss_combine == '1':
+                loss_boundaries = -nll_boundaries * seq_loss
+                loss_boundaries = loss_boundaries.mean()
+
+            loss_boundaries_with_bias = loss_boundaries + bias
 
             stats['loss_boundaries'] = loss_boundaries.item()
             stats['bias'] = bias.item()
 
-            loss_boundaries += bias
-
-            return loss, stats, loss_boundaries
+            return loss, stats, loss_boundaries_with_bias
         else:
             # Generation mode, we return raw logits
             return logit
