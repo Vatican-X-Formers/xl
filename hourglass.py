@@ -593,14 +593,18 @@ class MemTransformerLM(nn.Module):
         if self.training or target is not None:
             # T x B x C
             assert hidden.size(0) == target.size(0)
+
+            entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
+            entropy = torch.sum(entropy, dim=-1)
+
             logit = logit.view(-1, logit.size(-1))
             target = target.view(-1)
 
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            right = (loss[:-1, :] > loss[1:, :])
-            left = (loss[1:, :] > loss[:-1, :])
+            right = (entropy[:-1, :] > entropy[1:, :])
+            left = (entropy[1:, :] > entropy[:-1, :])
             total = torch.cat([torch.ones((1, left.size(1)),
                                           device=left.device, dtype=left.dtype
                                           ), left])
