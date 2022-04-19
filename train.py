@@ -107,6 +107,7 @@ def parse_args():
     model.add_argument('--bp_capacity', type=str, default='none')
     model.add_argument('--bp_weight', type=float, default=1.0)
     model.add_argument('--bp_switch_step', type=int, default=0)
+    model.add_argument('--bp_target', type=str, nargs='+')
     model.add_argument('--rl_loss_combine', type=str, default='none')
 
     boundaries = parser.add_argument_group('boundary creator')
@@ -195,6 +196,8 @@ def parse_args():
     parser.set_defaults(**config)
     args, _ = parser.parse_known_args()
 
+    args.ckpt_path = '/'.join(config_args.config_file.split('/')[:-1])
+
     assert len(args.eval_tgt_lengths) == len(args.eval_total_lengths)
 
     if args.batch_size % args.batch_chunk != 0:
@@ -273,8 +276,9 @@ def weights_init(m, args):
             init_weight(m.r_r_bias, args)
 
 
-def sample_generation(vocab, model, args, temp=1.0, start_seq=[0], steps=100, dataset='text8'):
-    # Turn on evaluation mode which disables dropout.
+def sample_generation(vocab, boundary_creator, model,
+                      temp=1.0, start_seq=[0], steps=100,
+                      dataset='text8', step=0):
     model.eval()
 
     start_len = len(start_seq)
@@ -282,22 +286,32 @@ def sample_generation(vocab, model, args, temp=1.0, start_seq=[0], steps=100, da
 
     with torch.no_grad():
         for i in range(steps):
-            target = None
+            # Data preparation
             data = torch.tensor(generated_sequence).unsqueeze(1).cuda()
+            boundaries = boundary_creator.get_boundaries(
+                txt=vocab.convert_to_sent(data, mode='real'),
+                tensor=data
+            ).t().bool().contiguous()[:-1, :]
 
-            enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.cuda.amp.autocast(enable_autocast):
-                logits = model(data, target)
-                probs = F.softmax(logits[-1, 0, :], dim=0)
-                next_index = probs.cpu().multinomial(num_samples=1, replacement=True).item()
-                generated_sequence.append(next_index)
+            # Forward through the model
+            logits = model(
+                data=data,
+                target=None,
+                boundaries=boundaries,
+                step=step
+            )
+
+            # Transform logits to probs
+            probs = F.softmax(logits[-1, 0, :], dim=0)
+
+            # Sample next character
+            next_index = probs.cpu().multinomial(num_samples=1, replacement=True).item()
+            generated_sequence.append(next_index)
 
     model.train()
 
-    generated_sample = vocab.convert_to_sent(generated_sequence[start_len:])
-
-    if dataset == 'text8':
-        generated_sample = generated_sample.replace(' ', '').replace('_', ' ')
+    generated_sample = vocab.convert_to_sent(generated_sequence,
+                                             mode='real')
 
     return generated_sample
 
@@ -352,6 +366,7 @@ def gen_model_config(args, vocab):
         'bp_capacity': args.bp_capacity,
         'bp_weight': args.bp_weight,
         'bp_switch_step': args.bp_switch_step,
+        'bp_target': args.bp_target,
         'rl_loss_combine': args.rl_loss_combine,
         }
 

@@ -141,11 +141,16 @@ class Vocab(object):
     def convert_to_tensor(self, symbols):
         return torch.LongTensor(self.get_indices(symbols))
 
-    def convert_to_sent(self, indices, exclude=None):
-        if exclude is None:
+    def convert_to_sent(self, indices, mode='dataset'):
+        # Mode is either:
+        # - 'dataset' = It means that we get the dataset in the special format
+        # where each character is delimited by whitespaces and original
+        # whitespaces are usually encoded as some other special character
+        # - 'real' = It looks like a real sentence
+        if mode == 'dataset':
             return ' '.join([self.get_sym(idx) for idx in indices])
         else:
-            return ' '.join([self.get_sym(idx) for idx in indices if idx not in exclude])
+            return ''.join([self.get_sym(idx) for idx in indices]).replace('_', ' ')
 
     def __len__(self):
         return len(self.idx2sym)

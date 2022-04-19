@@ -387,7 +387,13 @@ class BoundaryPredictor(nn.Module):
             precision = TP / (TP + FP)
             recall = TP / (TP + FN)
 
-        return acc, precision, recall
+        stats = {
+            'acc': acc,
+            'precision': precision,
+            'recall': recall
+        }
+
+        return stats
 
     def calc_loss(self, preds, gt):
         return self.loss(preds, gt.float())
@@ -401,10 +407,10 @@ class MemTransformerLM(nn.Module):
                  activation_function='relu',
                  gather_stats=[], bp_mode='none', bp_capacity='none',
                  bp_weight=0.0, bp_switch_step=0,
+                 bp_target=['pplx', 'entropy', 'space'],
                  rl_loss_combine='none',
                  ):
         super(MemTransformerLM, self).__init__()
-        self.rl_loss_combine = rl_loss_combine
         self.n_token = n_token
 
         self.d_model = d_model
@@ -463,6 +469,7 @@ class MemTransformerLM(nn.Module):
                                                             d_model=d_model,
                                                             weight=bp_weight)
                 self.bp_switch_step = bp_switch_step
+                self.bp_target = bp_target
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -474,6 +481,8 @@ class MemTransformerLM(nn.Module):
         # These stats, e.g. shortened_length, depend on the batch size
         # As we take maximum shortened_length from the batch - take care
         self.gather_stats = gather_stats
+
+        self.rl_loss_combine = rl_loss_combine
 
     def _forward(self, core_input, layers=None):
         # Core_input is of size (T x B x C)
@@ -516,27 +525,63 @@ class MemTransformerLM(nn.Module):
 
         return core_out
 
-    def create_masks(self, boundaries):
-        # This is due to specific implementation we use to create pooling masks
-        # later in the Transformer model - True assumes that we start a new group
-        # and we always want to start a new group at the first element, not to skip anything
-        boundaries = boundaries.transpose(0, 1)
-        boundaries[:, 0] = True
+    def create_masks(self, boundaries, mode='boundary_ends_group'):
+        # Possible modes:
+            # boundary_ends_group - this should be a bit better
+                # I also call it segmentation shift idea to improve whitespace
+                # baseline
+            # boundary_starts_group - this is used in all baselines before 1333
 
-        # Upsample mask creation
-        upsample_mask = boundaries.cumsum(-1) - 1
+        if mode == 'boundary_starts_group':
+            boundaries = boundaries.transpose(0, 1)
+            boundaries[:, 0] = True
+            pdb.set_trace()
 
-        # Downsample mask creation
-        n_segments = boundaries.sum(-1)
-        maximum_segment = n_segments.max()
-        tmp = torch.zeros_like(boundaries).unsqueeze(2) + torch.arange(1, maximum_segment + 1, 1, device=boundaries.device)
-        foo = tmp - boundaries.cumsum(1).unsqueeze(-1)
-        final = torch.zeros_like(foo)
-        final[foo == 0] = 1
-        size_of_groups = final.sum(1, keepdim=True)
-        downsampling_mask = final / (size_of_groups + 1e-9)
+            # Upsample mask creation
+            upsample_mask = boundaries.cumsum(-1) - 1
+
+            # Downsample mask creation
+            n_segments = boundaries.sum(-1)
+            maximum_segment = n_segments.max()
+            tmp = torch.zeros_like(boundaries).unsqueeze(2) + torch.arange(1, maximum_segment + 1, 1, device=boundaries.device)
+            foo = tmp - boundaries.cumsum(1).unsqueeze(-1)
+            final = torch.zeros_like(foo)
+            final[foo == 0] = 1
+            size_of_groups = final.sum(1, keepdim=True)
+            downsampling_mask = final / (size_of_groups + 1e-9)
+        elif mode == 'boundary_ends_group':
+            boundaries = boundaries.transpose(0, 1)
+
+            # Upsample mask creation
+            upsample_mask = boundaries.cumsum(-1)
+            # Downsample mask creation
+            max_segments = boundaries.sum(-1).max()
+
+            tmp = torch.zeros_like(boundaries).unsqueeze(2) + torch.arange(start=0,
+                                                                           end=max_segments + 1,
+                                                                           step=1,
+                                                                           device=boundaries.device)
+            bar = boundaries.cumsum(1).unsqueeze(-1)
+            bar[boundaries] -= 1
+
+            foo = tmp - bar
+            final = torch.zeros_like(foo)
+            final[foo == 0] = 1
+            size_of_groups = final.sum(1, keepdim=True)
+            downsampling_mask = final / (size_of_groups + 1e-9)
 
         return downsampling_mask, upsample_mask, size_of_groups.long().squeeze(1)
+
+
+    def get_spikes(self, vector):
+        right = (vector[:-1, :] > vector[1:, :])
+        left = (vector[1:, :] > vector[:-1, :])
+        total = torch.cat([torch.ones((1, left.size(1)),
+                                      device=left.device, dtype=left.dtype
+                                      ), left])
+        # total are better then their left
+        total[:-1, :] &= right
+        return total
 
     def forward(self, data, target, boundaries=None, step=0):
         stats = {}
@@ -564,13 +609,17 @@ class MemTransformerLM(nn.Module):
 
             if isinstance(layers, Upsampler):
                 # The residual come from just before shortening
-                hidden = layers(hidden, residual=residual,
+                hidden = layers(hidden,
+                                residual=residual,
                                 upsampling_mask=upsampling_mask,
                                 boundaries=boundaries)
             elif isinstance(layers, Downsampler):
                 if getattr(self, 'boundary_predictor', None) is not None:
                     boundaries_preds = self.boundary_predictor(hidden, boundaries)
-                    boundaries = self.boundary_predictor.discretize(boundaries_preds)
+
+                    if boundaries is None:
+                        boundaries = self.boundary_predictor.discretize(boundaries_preds)
+
                     downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
                     if 'shortened_length' in self.gather_stats:
                         stats['shortened_length'] = downsampling_mask.size(2)
@@ -594,34 +643,45 @@ class MemTransformerLM(nn.Module):
             # T x B x C
             assert hidden.size(0) == target.size(0)
 
-            entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
-            entropy = torch.sum(entropy, dim=-1)
+            if 'entropy' in self.bp_target:
+                entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
+                entropy = torch.sum(entropy, dim=-1)
 
             logit = logit.view(-1, logit.size(-1))
-            target = target.view(-1)
+            # TODO uncommend
+            # target = target.view(-1)
+            target = target.reshape(-1)
 
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            right = (entropy[:-1, :] > entropy[1:, :])
-            left = (entropy[1:, :] > entropy[:-1, :])
-            total = torch.cat([torch.ones((1, left.size(1)),
-                                          device=left.device, dtype=left.dtype
-                                          ), left])
-            # total are better then their left
-            total[:-1, :] &= right
+            # Get final target mask to supervise boundary predictor
+            target_bp_mask = torch.zeros(loss.size(), device=loss.device,
+                                         dtype=torch.bool)
+
+            # Think how I can flexibly implement the quartile/peak algorithms
+
+            if 'spaces' in self.bp_target:
+                target_bp_mask = target_bp_mask | (data[-tgt_len:] == 0)
+            elif 'entropy' in self.bp_target:
+                target_bp_mask = target_bp_mask | self.get_spikes(entropy)
+            elif 'pplx' in self.bp_target:
+                target_bp_mask = target_bp_mask | self.get_spikes(loss)
 
             boundaries_preds = boundaries_preds[-tgt_len:]
             boundaries = boundaries[-tgt_len:]
 
-            loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds, total)
-            acc, prec, recall = self.boundary_predictor.calc_stats(boundaries, total)
+            loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds,
+                                                                target_bp_mask)
+            bp_stats = self.boundary_predictor.calc_stats(boundaries,
+                                                          target_bp_mask)
 
-            stats['acc'] = acc
-            stats['precision'] = prec
-            stats['recall'] = recall
+            for k, v in bp_stats.items():
+                stats[f'{k}'] = v
+
             stats['loss_boundaries'] = loss_boundaries.item()
 
+            # return loss, stats, loss_boundaries, target_bp_mask, entropy
             return loss, stats, loss_boundaries
         else:
             # Generation mode, we return raw logits
