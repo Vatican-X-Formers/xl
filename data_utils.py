@@ -91,7 +91,9 @@ class LMOrderedIterator(object):
         data = torch.cat(data, dim=1).long().contiguous()
         target = data[-seq_len:]
         boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
-                                                          tensor=data).t().bool().contiguous()[:-1, :]
+                                                          tensor=data)
+        if boundaries is not None:
+            boundaries = boundaries.t().bool().contiguous()[:-1, :]
         data = data[:-1, :]
 
         return data, target, seq_len, boundaries

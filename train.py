@@ -109,6 +109,7 @@ def parse_args():
     model.add_argument('--bp_switch_step', type=int, default=0)
     model.add_argument('--bp_target', type=str, nargs='+')
     model.add_argument('--rl_loss_combine', type=str, default='none')
+    model.add_argument('--mask_mode', type=str, default='boundary_starts_group')
 
     boundaries = parser.add_argument_group('boundary creator')
     boundaries.add_argument('--move_prob', type=float, default=0.0)
@@ -368,6 +369,7 @@ def gen_model_config(args, vocab):
         'bp_switch_step': args.bp_switch_step,
         'bp_target': args.bp_target,
         'rl_loss_combine': args.rl_loss_combine,
+        'mask_mode': args.mask_mode,
         }
 
     return model_config
@@ -444,7 +446,9 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
         data = data.to(tr_iter.device, non_blocking=True)
         target = target.to(tr_iter.device, non_blocking=True)
-        boundaries = boundaries.to(tr_iter.device, non_blocking=True)
+        if boundaries is not None:
+            boundaries = boundaries.to(tr_iter.device, non_blocking=True)
+
         log_step += 1
         target_tokens += target.numel()
 
