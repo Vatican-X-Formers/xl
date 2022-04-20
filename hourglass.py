@@ -590,6 +590,8 @@ class MemTransformerLM(nn.Module):
 
         if self.spikes_perc != 100:
             for l_idx, r_idx in [(0, 100), (100, 500), (500, 5000)]:
+                if l_idx >= vector.size(0):
+                    continue
                 # Add large
                 upper_value = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
                                             self.spikes_perc)
