@@ -552,8 +552,7 @@ class MemTransformerLM(nn.Module):
             downsampling_mask = final / (size_of_groups + 1e-9)
         elif self.mask_mode == 'boundary_ends_group':
             boundaries = boundaries.transpose(0, 1)
-            pdb.set_trace()
-            # TODO, confirm one last time that it's okay
+            # TODO, sometimes last element may be null
 
             # Upsample mask creation
             upsample_mask = boundaries.cumsum(-1)
