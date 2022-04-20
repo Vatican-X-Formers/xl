@@ -108,6 +108,7 @@ def parse_args():
     model.add_argument('--bp_weight', type=float, default=1.0)
     model.add_argument('--bp_switch_step', type=int, default=0)
     model.add_argument('--bp_target', type=str, nargs='+')
+    model.add_argument('--spikes_perc', type=int, default=100)
     model.add_argument('--rl_loss_combine', type=str, default='none')
     model.add_argument('--mask_mode', type=str, default='boundary_starts_group')
 
@@ -369,6 +370,7 @@ def gen_model_config(args, vocab):
         'bp_weight': args.bp_weight,
         'bp_switch_step': args.bp_switch_step,
         'bp_target': args.bp_target,
+        'spikes_perc': args.spikes_perc,
         'rl_loss_combine': args.rl_loss_combine,
         'mask_mode': args.mask_mode,
         }

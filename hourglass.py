@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import pdb
+import utils
 
 
 @torch.jit.script
@@ -408,6 +410,7 @@ class MemTransformerLM(nn.Module):
                  gather_stats=[], bp_mode='none', bp_capacity='none',
                  bp_weight=0.0, bp_switch_step=0,
                  bp_target=['pplx', 'entropy', 'space'],
+                 spikes_perc=100,
                  rl_loss_combine='none',
                  mask_mode='boundary_starts_group',
                  ):
@@ -471,6 +474,8 @@ class MemTransformerLM(nn.Module):
                                                             weight=bp_weight)
                 self.bp_switch_step = bp_switch_step
                 self.bp_target = bp_target
+                self.spikes_perc = spikes_perc
+                assert self.spikes_perc >= 50
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -582,6 +587,24 @@ class MemTransformerLM(nn.Module):
                                       ), left])
         # total are better then their left
         total[:-1, :] &= right
+
+        if self.spikes_perc != 100:
+            for l_idx, r_idx in [(0, 100), (100, 500), (500, 5000)]:
+                # Add large
+                upper_value = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
+                                            self.spikes_perc)
+                upper_value = torch.tensor(upper_value)
+                upper_value = utils.distributed.all_reduce_item(upper_value, op='mean')
+                total[l_idx:r_idx] |= (vector[l_idx:r_idx] >= upper_value)
+
+                # Cancel small
+                lower_value = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
+                                            100 - self.spikes_perc)
+                lower_value = torch.tensor(lower_value)
+                lower_value = utils.distributed.all_reduce_item(lower_value, op='mean')
+                total[l_idx:r_idx] &= (vector[l_idx:r_idx] >= lower_value)
+                print('y', total.sum())
+
         return total
 
     def forward(self, data, target, boundaries=None, step=0):
@@ -660,13 +683,13 @@ class MemTransformerLM(nn.Module):
                 target_bp_mask = torch.zeros(loss.size(), device=loss.device,
                                              dtype=torch.bool)
 
-                # Think how I can flexibly implement the quartile/peak algorithms
-
                 if 'spaces' in self.bp_target:
                     target_bp_mask = target_bp_mask | (data[-tgt_len:] == 0)
-                elif 'entropy' in self.bp_target:
+
+                if 'entropy' in self.bp_target:
                     target_bp_mask = target_bp_mask | self.get_spikes(entropy)
-                elif 'pplx' in self.bp_target:
+
+                if 'pplx' in self.bp_target:
                     target_bp_mask = target_bp_mask | self.get_spikes(loss)
 
                 boundaries_preds = boundaries_preds[-tgt_len:]
