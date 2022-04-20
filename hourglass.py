@@ -603,7 +603,6 @@ class MemTransformerLM(nn.Module):
                 lower_value = torch.tensor(lower_value)
                 lower_value = utils.distributed.all_reduce_item(lower_value, op='mean')
                 total[l_idx:r_idx] &= (vector[l_idx:r_idx] >= lower_value)
-                print('y', total.sum())
 
         return total
 
