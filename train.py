@@ -334,7 +334,10 @@ def evaluate(eval_iter, model, args, step):
                 boundaries = boundaries.to(eval_iter.device, non_blocking=True)
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
-            loss, stats, aux_loss, _ = model(data, target, boundaries, step=step)
+            loss, stats, aux_loss, _ = model(data,
+                                             target,
+                                             boundaries_to_predict=boundaries,
+                                             step=step)
             loss = loss.float().mean().type_as(loss)
 
             total_loss += seq_len * loss.item()
@@ -417,12 +420,12 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
             seq_loss, stats, aux_loss, boundaries_i = model(data_i,
                                                             target_i,
-                                                            boundaries=boundaries_i,
+                                                            boundaries_to_use=boundaries_i,
                                                             step=step)
 
     seq_loss, stats, aux_loss, _ = model(data_i,
                                          target_i,
-                                         boundaries=boundaries_i,
+                                         boundaries_to_predict=boundaries_i,
                                          step=step)
 
     seq_loss = seq_loss.float().mean().type_as(seq_loss)

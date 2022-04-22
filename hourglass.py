@@ -364,7 +364,7 @@ class BoundaryPredictor(nn.Module):
         elif mode == 'rl':
             pass
 
-    def forward(self, hidden, boundaries_gt=None):
+    def forward(self, hidden):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
 
@@ -608,7 +608,8 @@ class MemTransformerLM(nn.Module):
 
         return total
 
-    def forward(self, data, target, boundaries=None, step=0):
+    def forward(self, data, target, boundaries_to_use=None,
+                boundaries_to_predict=None, step=0):
         stats = {}
 
         # Data and target are of size T x B
@@ -637,14 +638,14 @@ class MemTransformerLM(nn.Module):
                 hidden = layers(x=hidden,
                                 residual=residual,
                                 upsampling_mask=upsampling_mask,
-                                boundaries=boundaries)
+                                boundaries=boundaries_to_use)
             elif isinstance(layers, Downsampler):
                 if getattr(self, 'boundary_predictor', None) is not None:
-                    boundaries_preds = self.boundary_predictor(hidden, boundaries)
-                    if boundaries is None:
-                        boundaries = self.boundary_predictor.discretize(boundaries_preds)
+                    boundaries_probs = self.boundary_predictor(hidden)
+                    if boundaries_to_use is None:
+                        boundaries_to_use = self.boundary_predictor.discretize(boundaries_probs)
 
-                downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
+                downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries_to_use)
                 if 'shortened_length' in self.gather_stats:
                     stats['shortened_length'] = downsampling_mask.size(2)
 
@@ -681,24 +682,30 @@ class MemTransformerLM(nn.Module):
 
             if getattr(self, 'boundary_predictor', None) is not None:
                 # Get final target mask to supervise boundary predictor
-                target_bp_mask = torch.zeros(loss.size(), device=loss.device,
-                                             dtype=torch.bool)
+                if len(self.bp_target):
+                    assert boundaries_to_predict is None
 
-                if 'spaces' in self.bp_target:
-                    target_bp_mask = target_bp_mask | (data[-tgt_len:] == 0)
+                    target_bp_mask = torch.zeros(loss.size(), device=loss.device,
+                                                 dtype=torch.bool)
 
-                if 'entropy' in self.bp_target:
-                    target_bp_mask = target_bp_mask | self.get_spikes(entropy)
+                    if 'spaces' in self.bp_target:
+                        target_bp_mask = target_bp_mask | (data[-tgt_len:] == 0)
 
-                if 'pplx' in self.bp_target:
-                    target_bp_mask = target_bp_mask | self.get_spikes(loss)
+                    if 'entropy' in self.bp_target:
+                        target_bp_mask = target_bp_mask | self.get_spikes(entropy)
 
-                boundaries_preds = boundaries_preds[-tgt_len:]
-                boundaries = boundaries[-tgt_len:]
+                    if 'pplx' in self.bp_target:
+                        target_bp_mask = target_bp_mask | self.get_spikes(loss)
+                else:
+                    assert boundaries_to_predict is not None
+                    target_bp_mask = boundaries_to_predict[-tgt_len:]
 
-                loss_boundaries = self.boundary_predictor.calc_loss(boundaries_preds,
+                boundaries_probs = boundaries_probs[-tgt_len:]
+                boundaries_to_use = boundaries_to_use[-tgt_len:]
+
+                loss_boundaries = self.boundary_predictor.calc_loss(boundaries_probs,
                                                                     target_bp_mask)
-                bp_stats = self.boundary_predictor.calc_stats(boundaries,
+                bp_stats = self.boundary_predictor.calc_stats(boundaries_to_use,
                                                               target_bp_mask)
 
                 for k, v in bp_stats.items():
