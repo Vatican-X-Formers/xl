@@ -682,9 +682,7 @@ class MemTransformerLM(nn.Module):
 
             if getattr(self, 'boundary_predictor', None) is not None:
                 # Get final target mask to supervise boundary predictor
-                if len(self.bp_target):
-                    assert boundaries_to_predict is None
-
+                if len(self.bp_target) and boundaries_to_predict is None:
                     target_bp_mask = torch.zeros(loss.size(), device=loss.device,
                                                  dtype=torch.bool)
 
