@@ -640,9 +640,9 @@ class MemTransformerLM(nn.Module):
                                 boundaries=boundaries)
             elif isinstance(layers, Downsampler):
                 if getattr(self, 'boundary_predictor', None) is not None:
-                    assert boundaries is None
                     boundaries_preds = self.boundary_predictor(hidden, boundaries)
-                    boundaries = self.boundary_predictor.discretize(boundaries_preds)
+                    if boundaries is None:
+                        boundaries = self.boundary_predictor.discretize(boundaries_preds)
 
                 downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries)
                 if 'shortened_length' in self.gather_stats:
@@ -707,7 +707,7 @@ class MemTransformerLM(nn.Module):
                 stats['loss_boundaries'] = loss_boundaries.item()
 
             # return loss, stats, loss_boundaries, target_bp_mask, entropy
-            return loss, stats, loss_boundaries
+            return loss, stats, loss_boundaries, target_bp_mask
         else:
             # Generation mode, we return raw logits
             return logit

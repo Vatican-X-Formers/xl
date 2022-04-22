@@ -111,6 +111,7 @@ def parse_args():
     model.add_argument('--spikes_perc', type=int, default=100)
     model.add_argument('--rl_loss_combine', type=str, default='none')
     model.add_argument('--mask_mode', type=str, default='boundary_starts_group')
+    model.add_argument('--n_iters', type=int, default=0)
 
     boundaries = parser.add_argument_group('boundary creator')
     boundaries.add_argument('--move_prob', type=float, default=0.0)
@@ -409,8 +410,21 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
     else:
         boundaries_i = None
 
-    seq_loss, stats, aux_loss = model(data_i, target_i,
-                                      boundaries=boundaries_i, step=step)
+    with torch.no_grad():
+        for i in range(args.n_iters):
+            if i == 0:
+                assert boundaries_i is None
+
+            seq_loss, stats, aux_loss, boundaries_i = model(data_i,
+                                                            target_i,
+                                                            boundaries=boundaries_i,
+                                                            step=step)
+
+    seq_loss, stats, aux_loss, _ = model(data_i,
+                                         target_i,
+                                         boundaries=boundaries_i,
+                                         step=step)
+
     seq_loss = seq_loss.float().mean().type_as(seq_loss)
     total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
