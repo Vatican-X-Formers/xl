@@ -334,7 +334,7 @@ def evaluate(eval_iter, model, args, step):
                 boundaries = boundaries.to(eval_iter.device, non_blocking=True)
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
-            loss, stats, aux_loss = model(data, target, boundaries, step=step)
+            loss, stats, aux_loss, _ = model(data, target, boundaries, step=step)
             loss = loss.float().mean().type_as(loss)
 
             total_loss += seq_len * loss.item()
