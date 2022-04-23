@@ -239,7 +239,6 @@ class Upsampler(nn.Module):
             pos_emb = self.pos_emb_cast(pos_emb)
             x += pos_emb
         elif self.mode == 'add_to_last':
-
             x = x.transpose(0, 1)
             x = torch.gather(
                 x, 1, upsampling_mask.long().unsqueeze(-1).repeat(1, 1, x.size(-1))
@@ -259,13 +258,6 @@ class Downsampler(nn.Module):
         super().__init__()
         self.mode = mode
         if mode == 'average':
-            # In fixed group size shortening we actually don't need to use that
-            # In variable group size approach we might wanna predict boundaries
-            # based on data. In such a situaiton we can add a group
-            # representation to indeces which are >= max(indices_in_the_group).
-            # Therefore probably most of the time to the first group we might
-            # need to add special trained vector and not the one gathered from
-            # data to prevent autoregressive property
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
         elif mode == 'lstm':
             self.downsampler = nn.LSTM(input_size=embedding_dim,
@@ -282,11 +274,6 @@ class Downsampler(nn.Module):
         elif mode == 'add_group_length_emb':
             self.group_size_emb = nn.Embedding(120, embedding_dim)
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
-            # self.pos_emb = PositionalEmbedding(embedding_dim)
-            # self.pos_emb_cast = nn.Sequential(
-            #     nn.Linear(embedding_dim, embedding_dim),
-            #     nn.ReLU(),
-            # )
         elif mode == 'weighted_mean':
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
 
@@ -356,13 +343,16 @@ class BoundaryPredictor(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(d_inner, 1),
             )
+        else:
+            raise NotImplementedError
 
         if mode == 'default':
             self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
         elif mode in ['equalize']:
+            # It worked a bit worse than default
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
-        elif mode == 'rl':
-            pass
+        else:
+            raise NotImplementedError
 
     def forward(self, hidden):
         # Boundaries are of shape [seq_len x bs]
@@ -370,6 +360,8 @@ class BoundaryPredictor(nn.Module):
 
         if self.mode in ['default']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
+        else:
+            raise NotImplementedError
 
         return preds
 
@@ -406,13 +398,13 @@ class MemTransformerLM(nn.Module):
                  dropout, dropatt, pre_lnorm=False, same_length=False,
                  clamp_len=-1, funnel_config="[3, (1, ) ,3]",
                  downsample_mode='average', upsample_mode='average',
-                 activation_function='relu',
-                 gather_stats=[], bp_mode='none', bp_capacity='none',
-                 bp_weight=0.0, bp_switch_step=0,
-                 bp_target=['pplx', 'entropy', 'space'],
-                 spikes_perc=100,
-                 rl_loss_combine='none',
                  mask_mode='boundary_starts_group',
+                 activation_function='relu', gather_stats=[],
+                 bp_mode='none', bp_capacity='',
+                 bp_weight=0.0, bp_switch_step=0,
+                 bp_target=[],
+                 spikes_perc=100,
+                 rl_loss_combine='',
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -534,10 +526,8 @@ class MemTransformerLM(nn.Module):
 
     def create_masks(self, boundaries):
         # Possible modes:
-            # boundary_ends_group - this should be a bit better
-                # I also call it segmentation shift idea to improve whitespace
-                # baseline
-            # boundary_starts_group - this is used in all baselines before 1333
+        # boundary_ends_group - this should be a bit better - I also call it segmentation shift idea to improve whitespace baseline
+        # boundary_starts_group - this is used in all baselines before 1333
 
         if self.mask_mode == 'boundary_starts_group':
             boundaries = boundaries.transpose(0, 1)
@@ -608,8 +598,13 @@ class MemTransformerLM(nn.Module):
 
         return total
 
-    def forward(self, data, target, boundaries_to_use=None,
-                boundaries_to_predict=None, step=0):
+    def forward(self,
+                data,
+                target,
+                boundaries_to_use=None,
+                boundaries_to_predict=None,
+                step=0):
+        # To gather stats from this forward step
         stats = {}
 
         # Data and target are of size T x B
@@ -626,7 +621,6 @@ class MemTransformerLM(nn.Module):
         word_emb = self.word_emb(data)
         hidden = self.drop(word_emb)
 
-        mems_index = 0
         loss_boundaries = torch.tensor(0, dtype=data.dtype, device=data.device)
         upsampling_mask, residual = None, None
 
@@ -643,8 +637,14 @@ class MemTransformerLM(nn.Module):
                 if getattr(self, 'boundary_predictor', None) is not None:
                     boundaries_probs = self.boundary_predictor(hidden)
                     if boundaries_to_use is None:
+                        assert boundaries_to_predict is not None or len(self.bp_target) > 0
+                        # If there are no other boundaries to use I need to
+                        # create one with my boundary predictor by discretizing
+                        # probs matrix
                         boundaries_to_use = self.boundary_predictor.discretize(boundaries_probs)
 
+                # Acrual moment of real mask creation that are further used in
+                # downsampler and upsampler
                 downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries_to_use)
                 if 'shortened_length' in self.gather_stats:
                     stats['shortened_length'] = downsampling_mask.size(2)
@@ -659,8 +659,8 @@ class MemTransformerLM(nn.Module):
                     layers=layers,
                 )
                 if self.pre_lnorm:
-                    hidden = self.layer_norms[mems_index](hidden)
-                mems_index += 1
+                    assert NotImplementedError
+                    # hidden = self.layer_norms[mems_index](hidden)
 
         hidden = hidden[-tgt_len:]
         logit = self.final_cast(hidden)
@@ -674,13 +674,18 @@ class MemTransformerLM(nn.Module):
                 entropy = torch.sum(entropy, dim=-1)
 
             logit = logit.view(-1, logit.size(-1))
-
             target = target.view(-1)
 
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
+            target_bp_mask = None
+
             if getattr(self, 'boundary_predictor', None) is not None:
+                # This branch in which we train bp is only open for
+                # non-autoregressive tokenisers or extracting boundaries from
+                # data and iteration
+
                 # Get final target mask to supervise boundary predictor
                 if len(self.bp_target) and boundaries_to_predict is None:
                     target_bp_mask = torch.zeros(loss.size(), device=loss.device,
@@ -692,9 +697,12 @@ class MemTransformerLM(nn.Module):
                     if 'entropy' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_spikes(entropy)
 
-                    if 'pplx' in self.bp_target:
+                    if 'nll' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_spikes(loss)
                 else:
+                    # boundaries_to_predict is not None either in case of
+                    # non-autoregressive tokenisers or iteration of spikes
+
                     assert boundaries_to_predict is not None
                     target_bp_mask = boundaries_to_predict[-tgt_len:]
 
@@ -703,6 +711,21 @@ class MemTransformerLM(nn.Module):
 
                 loss_boundaries = self.boundary_predictor.calc_loss(boundaries_probs,
                                                                     target_bp_mask)
+                # I calculate the stats of boundary predictor with respect to
+                # the boundaries I have used for down/up-sampling
+
+                # In case of iteration or situation where I'm given masks like
+                # in non-autoregressive tokenisers the boundary predictor just
+                # tries to predict boundaries based on data, while boundaries
+                # are given from outside of the model. In case of iteration the
+                # algorithm used for nll spikes has to be autoregressive
+
+                # In case of extracting boundaries from the data I predict some
+                # boundaries, then for this boundaries I get some loss for each
+                # element from which I can again calculate perplexity spikes.
+                # It also seems like an infinite iteration, as unless the
+                # spikes converge to a single boundary mask then bp will never
+                # converge too.
                 bp_stats = self.boundary_predictor.calc_stats(boundaries_to_use,
                                                               target_bp_mask)
 
@@ -711,7 +734,6 @@ class MemTransformerLM(nn.Module):
 
                 stats['loss_boundaries'] = loss_boundaries.item()
 
-            # return loss, stats, loss_boundaries, target_bp_mask, entropy
             return loss, stats, loss_boundaries, target_bp_mask
         else:
             # Generation mode, we return raw logits

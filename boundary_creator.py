@@ -1,11 +1,9 @@
 import os
 import pdb
 import torch
-import numpy as np
 from tokenizers import Tokenizer
 import sentencepiece as spm
 from tokenizer import AutoregressiveTokeniser
-from multiprocessing import Pool
 
 
 class BoundaryCreator():
@@ -13,16 +11,19 @@ class BoundaryCreator():
         self, boundaries_type, boundary_ids=None,
         move_prob=0.0, deletion_prob=0.0, insert_prob=0.0,
         clamp_group_sizes=False, min_group_length=0, max_group_length=1000 * 1000,
-        mean_normal=5.5, std_normal=1, **kwargs,
+        mean_normal=5.5, std_normal=1, fixed_sf=1, **kwargs,
     ):
         self.boundaries_type = boundaries_type
+
         if boundaries_type == 'ids':
             assert boundary_ids is not None and len(boundary_ids) > 0
-
-        if boundaries_type in ['ids']:
-            self.extract_offline = False
-        elif boundaries_type in ['normal']:
-            self.extract_offline = False
+        elif boundaries_type == 'constant':
+            assert fixed_sf > 0
+            self.fixed_sf = fixed_sf
+        elif boundaries_type == 'normal':
+            # Normal distribution arguments
+            self.mean_normal = mean_normal
+            self.std_normal = std_normal
 
         self.boundary_ids = boundary_ids
 
@@ -31,14 +32,10 @@ class BoundaryCreator():
         self.deletion_prob = deletion_prob
         self.insert_prob = insert_prob
 
-        # Parameters to truncate group sizes
+        # Parameters to clamp group sizes
         self.clamp_group_sizes = clamp_group_sizes
         self.min_group_length = min_group_length
         self.max_group_length = max_group_length
-
-        # Normal distribution arguments
-        self.mean_normal = mean_normal
-        self.std_normal = std_normal
 
     def corrupt_boundaries(self, boundaries):
         final_boundaries = torch.zeros_like(boundaries, dtype=torch.bool)
@@ -110,13 +107,12 @@ class BoundaryCreator():
         assert tensor is not None
         data = tensor
 
-        if self.boundaries_type == 'noboundaries':
-            return None
-
         data = data.transpose(0, 1)  # batch_size x seq_len
         boundaries = torch.zeros_like(data, dtype=torch.bool)
 
-        if self.boundaries_type == "ids":
+        if self.boundaries_type == 'noboundaries':
+            return None
+        elif self.boundaries_type == "ids":
             for boundary_id in self.boundary_ids:
                 boundaries |= (data == boundary_id)
         elif self.boundaries_type == "normal":
@@ -135,10 +131,13 @@ class BoundaryCreator():
             group_sizes = group_sizes.reshape(data.size()).long().to(data.device)
             group_sizes += 2  # This is the shift of the distribution
             boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
+        elif self.boundaries_type == 'constant':
+            pdb.set_trace()
         else:
             raise NotImplementedError
 
-        boundaries = self.corrupt_boundaries(boundaries)
+        if self.move_prob > 0 or self.insert_prob > 0 or self.deletion_prob > 0:
+            boundaries = self.corrupt_boundaries(boundaries)
 
         if self.clamp_group_sizes:
             boundaries = self.restrict_max_group_length(boundaries)
@@ -151,7 +150,6 @@ class TokenizerBoundaryCreator(BoundaryCreator):
                  tokenizer_save_dir, tokenizer_algorithm, **kwargs):
         super().__init__(boundaries_type, **kwargs)
 
-        self.extract_offline = True
         self.tokenizer = AutoregressiveTokeniser(corpus_filepath='',
                                                  save_dir=tokenizer_save_dir,
                                                  tokenizer_type=tokenizer_type,
@@ -179,7 +177,6 @@ class NonAutoregressiveBoundaryCreator(BoundaryCreator):
                  tokenizer_save_dir, tokenizer_algorithm, **kwargs):
         super().__init__(boundaries_type, **kwargs)
 
-        self.extract_offline = True
         tokenizer_path = self.get_tokenizer_filename(tokenizer_type,
                                                      tokenizer_vocab_size)
         tokenizer_path = os.path.join(tokenizer_save_dir, 'json', tokenizer_path)
@@ -216,7 +213,6 @@ class SPMBoundaries(BoundaryCreator):
     def __init__(self, boundaries_type, tokenizer_type, tokenizer_vocab_size,
                  tokenizer_save_dir, **kwargs):
         super().__init__(boundaries_type, **kwargs)
-        self.extract_offline = False
         filename = self.get_tokenizer_filename(tokenizer_type,
                                                tokenizer_vocab_size)
         filepath = os.path.join(tokenizer_save_dir, 'spm', filename)
@@ -265,29 +261,25 @@ class SPMBoundaries(BoundaryCreator):
         return boundaries
 
 
-def get_boundary_checkpoint_name(datadir, boundaries_type, **kwargs):
-    if boundaries_type in ['noboundaries', 'ids', 'constant', 'normal', 'space_dist']:
-        filename = os.path.join(datadir, 'cache.pt')
-    elif boundaries_type == 'tokenizer':
-        if kwargs['tokenizer_dropout'] == 0:
-            filename = os.path.join(datadir,
-                                    f'cache_{kwargs["tokenizer_type"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
-        else:
-            filename = os.path.join(datadir, f'cache_{kwargs["tokenizer_type"]}_drop{kwargs["tokenizer_dropout"]}_{kwargs["tokenizer_vocab_size"]}_{kwargs["tokenizer_algorithm"]}.pt')
-
-    return filename
-
-
 def get_boundary_creator(boundaries_type, **kwargs):
     if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
         return BoundaryCreator(boundaries_type, **kwargs)
     elif boundaries_type == 'tokenizer':
         if kwargs['tokenizer_type'].startswith('spm'):
+            # Sentencepiece approach was used as for second approach of fixing
+            # tokenisers. It was used with boundary predictor that was trying
+            # to learn the decisions made by tokenisers but autoregressively
+            # I used the sentencepiece Unigram also for the 3rd approach of
+            # fixing tokenisers
             return SPMBoundaries(boundaries_type, **kwargs)
         else:
             if kwargs['tokenizer_algorithm'] == 'approachna':
+                # It corresponds to the second approach of fixing tokenisers
                 return NonAutoregressiveBoundaryCreator(boundaries_type, **kwargs)
             else:
+                # This branch corresponds to the first approach of fixing
+                # tokenisers. It calculates the data from corpus, memorises all
+                # all stats and makes autoregressive decisions based on it
                 return TokenizerBoundaryCreator(boundaries_type, **kwargs)
 
 

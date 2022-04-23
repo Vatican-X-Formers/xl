@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 
 import utils
 from utils.vocabulary import Vocab
-from boundary_creator import get_boundary_checkpoint_name, get_boundary_creator
+from boundary_creator import get_boundary_creator
 
 
 class LMOrderedIterator(object):
@@ -146,8 +146,6 @@ class Corpus(object):
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
-    filename = get_boundary_checkpoint_name(datadir, **kwargs)
-    logging.info(f'Target corpus is under path {filename}')
     corpus = Corpus(datadir, dataset, **kwargs)
 
     return corpus

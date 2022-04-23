@@ -101,19 +101,20 @@ def parse_args():
                        help="[pre_funnel_vanilla_layers, (funnel_layers, ), post_funnel_vanilla_layers]")
     model.add_argument('--downsample_mode', type=str, default='average', help='')
     model.add_argument('--upsample_mode', type=str, default='average', help='')
+    model.add_argument('--mask_mode', type=str, default='boundary_starts_group')
     model.add_argument('--activation_function', type=str, default='relu', help='')
     model.add_argument('--gather_stats', nargs="+", default=['shortened_length'])
-    model.add_argument('--bp_mode', type=str, default='none')
-    model.add_argument('--bp_capacity', type=str, default='none')
-    model.add_argument('--bp_weight', type=float, default=1.0)
-    model.add_argument('--bp_switch_step', type=int, default=0)
-    model.add_argument('--bp_target', type=str, nargs='+')
-    model.add_argument('--spikes_perc', type=int, default=100)
     model.add_argument('--rl_loss_combine', type=str, default='none')
-    model.add_argument('--mask_mode', type=str, default='boundary_starts_group')
-    model.add_argument('--n_iters', type=int, default=0)
+
+    models_bp = parser.add_argument_group('models boundary predictor params')
+    models_bp.add_argument('--bp_mode', type=str, default='none')
+    models_bp.add_argument('--bp_capacity', type=str, default='none')
+    models_bp.add_argument('--bp_weight', type=float, default=None)
+    models_bp.add_argument('--bp_switch_step', type=int, default=None)
 
     boundaries = parser.add_argument_group('boundary creator')
+    boundaries.add_argument('--boundaries_type', type=str, default='vanilla')
+    boundaries.add_argument('--boundary_ids', type=str, default='[]')
     boundaries.add_argument('--move_prob', type=float, default=0.0)
     boundaries.add_argument('--deletion_prob', type=float, default=0.0)
     boundaries.add_argument('--insert_prob', type=float, default=0.0)
@@ -122,13 +123,15 @@ def parse_args():
     boundaries.add_argument('--max_group_length', type=int, default=1000000)
     boundaries.add_argument('--mean_normal', type=float, default=5.5)
     boundaries.add_argument('--std_normal', type=float, default=1.0)
-    boundaries.add_argument('--boundary_ids', type=str, default='[]')
-    boundaries.add_argument('--boundaries_type', type=str, default='vanilla')
+    boundaries.add_argument('--fixed_sf', type=int, default=-1)
     boundaries.add_argument('--tokenizer_type', type=str)
     boundaries.add_argument('--tokenizer_vocab_size', type=int)
     boundaries.add_argument('--tokenizer_dropout', type=float)
     boundaries.add_argument('--tokenizer_save_dir', default='./tokenizer_data/')
     boundaries.add_argument('--tokenizer_algorithm', default=None)
+    boundaries.add_argument('--bp_target', type=str, nargs='+')
+    boundaries.add_argument('--spikes_perc', type=int, default=100)
+    boundaries.add_argument('--n_iters', type=int, default=0)
 
     opt = parser.add_argument_group('optimizer setup')
     opt.add_argument('--optim', default='adam', type=str,
@@ -205,6 +208,17 @@ def parse_args():
 
     if args.batch_size % args.batch_chunk != 0:
         raise RuntimeError('Batch size needs to be divisible by batch chunk')
+
+    if args.n_iters > 0:
+        assert args.boundaries_type == 'noboundaries' and args.bp_mode != \
+            'none' and len(args.bp_target) > 0
+
+    if args.bp_mode != 'none':
+        assert args.boundaries_type == 'tokenizer' or \
+            (args.boundaries_type == 'noboundaries' and len(args.bp_target) > 0)
+
+    if args.boundaries_type in ['ids', 'normal', 'space_dist', 'constant']:
+        assert args.bp_mode == 'none'
 
     return args
 
@@ -284,7 +298,6 @@ def sample_generation(vocab, boundary_creator, model,
                       dataset='text8', step=0):
     model.eval()
 
-    start_len = len(start_seq)
     generated_sequence = start_seq
 
     with torch.no_grad():
@@ -324,20 +337,35 @@ def evaluate(eval_iter, model, args, step):
     model.eval()
 
     stats_agg = defaultdict(list)
-    # Evaluation
     total_len, total_loss = 0, 0.
+
     with torch.no_grad():
         for i, (data, target, seq_len, boundaries) in enumerate(eval_iter.get_fixlen_iter()):
             data = data.to(eval_iter.device, non_blocking=True)
             target = target.to(eval_iter.device, non_blocking=True)
             if boundaries is not None:
                 boundaries = boundaries.to(eval_iter.device, non_blocking=True)
+
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
-            loss, stats, aux_loss, _ = model(data,
-                                             target,
-                                             boundaries_to_predict=boundaries,
-                                             step=step)
+
+            if getattr(model, 'boundary_predictor', None) is not None:
+                assert args.bp_switch_step is None or args.bp_switch_step == 0
+                loss, stats, aux_loss, _ = model(data,
+                                                 target,
+                                                 boundaries_to_use=None,
+                                                 boundaries_to_predict=boundaries,
+                                                 step=step)
+            else:
+                # Also autoregressive tokenisers should be added here, approach 1 and 3
+                assert args.boundaries_type in ['ids', 'normal', 'space_dist',
+                                                'constant', 'noboundaries']
+                loss, stats, aux_loss, _ = model(data,
+                                                 target,
+                                                 boundaries_to_use=boundaries,
+                                                 boundaries_to_predict=None,
+                                                 step=step)
+
             loss = loss.float().mean().type_as(loss)
 
             total_loss += seq_len * loss.item()
@@ -384,6 +412,8 @@ def gen_model_config(args, vocab):
 
 def get_boundary_config(args):
     boundary_config = {
+        'boundaries_type': args.boundaries_type,
+        'boundary_ids': args.boundary_ids,
         'move_prob': args.move_prob,
         'deletion_prob': args.deletion_prob,
         'insert_prob': args.insert_prob,
@@ -392,8 +422,7 @@ def get_boundary_config(args):
         'max_group_length': args.max_group_length,
         'mean_normal': args.mean_normal,
         'std_normal': args.std_normal,
-        'boundary_ids': args.boundary_ids,
-        'boundaries_type': args.boundaries_type,
+        'fixed_sf': args.fixed_sf,
         'tokenizer_type': args.tokenizer_type,
         'tokenizer_vocab_size': args.tokenizer_vocab_size,
         'tokenizer_dropout': args.tokenizer_dropout,
@@ -421,12 +450,25 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
             seq_loss, stats, aux_loss, boundaries_i = model(data_i,
                                                             target_i,
                                                             boundaries_to_use=boundaries_i,
+                                                            boundaries_to_predict=None,
                                                             step=step)
 
-    seq_loss, stats, aux_loss, _ = model(data_i,
-                                         target_i,
-                                         boundaries_to_predict=boundaries_i,
-                                         step=step)
+    if getattr(model, 'boundary_predictor', None) is not None:
+        assert args.bp_switch_step is None or args.bp_switch_step == 0
+        seq_loss, stats, aux_loss, _ = model(data_i,
+                                             target_i,
+                                             boundaries_to_use=None,
+                                             boundaries_to_predict=boundaries_i,
+                                             step=step)
+    else:
+        # Also autoregressive tokenisers should be added here, approach 1 and 3
+        assert args.boundaries_type in ['ids', 'normal', 'space_dist',
+                                        'constant', 'noboundaries']
+        seq_loss, stats, aux_loss, _ = model(data_i,
+                                             target_i,
+                                             boundaries_to_use=boundaries_i,
+                                             boundaries_to_predict=None,
+                                             step=step)
 
     seq_loss = seq_loss.float().mean().type_as(seq_loss)
     total_loss = (seq_loss + aux_loss) / args.batch_chunk
