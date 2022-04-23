@@ -132,7 +132,7 @@ class BoundaryCreator():
             group_sizes += 2  # This is the shift of the distribution
             boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
         elif self.boundaries_type == 'constant':
-            pdb.set_trace()
+            boundaries[:, ::self.fixed_sf] = 1
         else:
             raise NotImplementedError
 
