@@ -347,7 +347,8 @@ class BoundaryPredictor(nn.Module):
             raise NotImplementedError
 
         if mode == 'default':
-            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+            # self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+            self.loss = nn.BCEWithLogitsLoss()
         elif mode in ['equalize']:
             # It worked a bit worse than default
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
