@@ -349,18 +349,7 @@ def evaluate(eval_iter, model, args, step):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
 
-            for i in range(args.n_iters):
-                if i == 0:
-                    assert boundaries is None
-
-                _, _, _, boundaries = model(data,
-                                            target,
-                                            boundaries_to_use=boundaries,
-                                            boundaries_to_predict=None,
-                                            step=step)
-
             if getattr(model, 'boundary_predictor', None) is not None:
-                print(1)
                 assert args.bp_switch_step is None or args.bp_switch_step == 0
                 loss, stats, aux_loss, _ = model(data,
                                                  target,
@@ -368,7 +357,6 @@ def evaluate(eval_iter, model, args, step):
                                                  boundaries_to_predict=boundaries,
                                                  step=step)
             else:
-                print(2)
                 # Also autoregressive tokenisers should be added here, approach 1 and 3
                 assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                                 'constant', 'noboundaries']
@@ -762,6 +750,7 @@ def main():
     model.apply(functools.partial(weights_init, args=args))
     model.word_emb.apply(functools.partial(weights_init, args=args))
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
+    args.is_bp = getattr(model, 'boundary_predictor', None) is not None
 
     # optimizer
     if args.optim.lower() == 'sgd':
