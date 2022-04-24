@@ -453,7 +453,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
                                                             boundaries_to_predict=None,
                                                             step=step)
 
-    if getattr(model, 'boundary_predictor', None) is not None:
+    if args.is_bp:
         print(1)
         assert args.bp_switch_step is None or args.bp_switch_step == 0
         seq_loss, stats, aux_loss, _ = model(data_i,
