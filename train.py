@@ -360,6 +360,7 @@ def evaluate(eval_iter, model, args, step):
                                             step=step)
 
             if getattr(model, 'boundary_predictor', None) is not None:
+                print(1)
                 assert args.bp_switch_step is None or args.bp_switch_step == 0
                 loss, stats, aux_loss, _ = model(data,
                                                  target,
@@ -367,6 +368,7 @@ def evaluate(eval_iter, model, args, step):
                                                  boundaries_to_predict=boundaries,
                                                  step=step)
             else:
+                print(2)
                 # Also autoregressive tokenisers should be added here, approach 1 and 3
                 assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                                 'constant', 'noboundaries']
@@ -464,6 +466,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
                                                             step=step)
 
     if getattr(model, 'boundary_predictor', None) is not None:
+        print(1)
         assert args.bp_switch_step is None or args.bp_switch_step == 0
         seq_loss, stats, aux_loss, _ = model(data_i,
                                              target_i,
@@ -471,6 +474,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
                                              boundaries_to_predict=boundaries_i,
                                              step=step)
     else:
+        print(2)
         # Also autoregressive tokenisers should be added here, approach 1 and 3
         assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                         'constant', 'noboundaries']
