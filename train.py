@@ -130,7 +130,9 @@ def parse_args():
     boundaries.add_argument('--tokenizer_save_dir', default='./tokenizer_data/')
     boundaries.add_argument('--tokenizer_algorithm', default=None)
     boundaries.add_argument('--bp_target', type=str, nargs='+')
-    boundaries.add_argument('--spikes_perc', type=int, default=100)
+    boundaries.add_argument('--spikes_upper_perc', type=int, default=100)
+    boundaries.add_argument('--spikes_lower_perc', type=int, default=0)
+    boundaries.add_argument('--value_perc', type=int, default=100)
     boundaries.add_argument('--n_iters', type=int, default=0)
 
     opt = parser.add_argument_group('optimizer setup')
@@ -402,7 +404,9 @@ def gen_model_config(args, vocab):
         'bp_weight': args.bp_weight,
         'bp_switch_step': args.bp_switch_step,
         'bp_target': args.bp_target,
-        'spikes_perc': args.spikes_perc,
+        'spikes_upper_perc': args.spikes_upper_perc,
+        'spikes_lower_perc': args.spikes_lower_perc,
+        'value_perc': args.value_perc,
         'rl_loss_combine': args.rl_loss_combine,
         'mask_mode': args.mask_mode,
         }
@@ -454,7 +458,6 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
                                                             step=step)
 
     if args.is_bp:
-        print(1)
         assert args.bp_switch_step is None or args.bp_switch_step == 0
         seq_loss, stats, aux_loss, _ = model(data_i,
                                              target_i,
@@ -462,7 +465,6 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
                                              boundaries_to_predict=boundaries_i,
                                              step=step)
     else:
-        print(2)
         # Also autoregressive tokenisers should be added here, approach 1 and 3
         assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                         'constant', 'noboundaries']

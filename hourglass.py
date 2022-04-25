@@ -403,8 +403,8 @@ class MemTransformerLM(nn.Module):
                  activation_function='relu', gather_stats=[],
                  bp_mode='none', bp_capacity='',
                  bp_weight=0.0, bp_switch_step=0,
-                 bp_target=[],
-                 spikes_perc=100,
+                 bp_target=[], spikes_upper_perc=100, spikes_lower_perc=0,
+                 value_perc=100,
                  rl_loss_combine='',
                  ):
         super(MemTransformerLM, self).__init__()
@@ -467,8 +467,9 @@ class MemTransformerLM(nn.Module):
                                                             weight=bp_weight)
                 self.bp_switch_step = bp_switch_step
                 self.bp_target = bp_target
-                self.spikes_perc = spikes_perc
-                assert self.spikes_perc >= 50
+                self.spikes_upper_perc = spikes_upper_perc
+                self.spikes_lower_perc = spikes_lower_perc
+                self.value_perc = value_perc
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -578,24 +579,54 @@ class MemTransformerLM(nn.Module):
                                       ), left])
         # total are better then their left
         total[:-1, :] &= right
+        to_add, to_discard = torch.zeros_like(vector), torch.zeros_like(vector)
 
-        if self.spikes_perc != 100:
-            for l_idx, r_idx in [(0, 100), (100, 500), (500, 5000)]:
-                if l_idx >= vector.size(0):
-                    continue
-                # Add large
-                upper_value = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
-                                            self.spikes_perc)
+        for l_idx, r_idx in [(0, 100), (100, 300), (300, 700), (700, 5000)]:
+            if l_idx >= vector.size(0):
+                continue
+
+            values_to_calc_stats = vector[l_idx:r_idx][total[l_idx:r_idx]]
+            values_to_calc_stats = values_to_calc_stats.cpu().detach().numpy()
+
+            to_add, to_discard = None, None
+
+            # Add large
+            if self.spikes_upper_perc != 100:
+                upper_value = np.percentile(values_to_calc_stats,
+                                            self.spikes_upper_perc)
                 upper_value = torch.tensor(upper_value)
                 upper_value = utils.distributed.all_reduce_item(upper_value, op='mean')
-                total[l_idx:r_idx] |= (vector[l_idx:r_idx] >= upper_value)
+                to_add = (vector[l_idx:r_idx] >= upper_value) & ~total[l_idx:r_idx]
 
-                # Cancel small
-                lower_value = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
-                                            100 - self.spikes_perc)
+            # Cancel small
+            if self.spikes_lower_perc != 0:
+                lower_value = np.percentile(values_to_calc_stats,
+                                            self.spikes_lower_perc)
                 lower_value = torch.tensor(lower_value)
                 lower_value = utils.distributed.all_reduce_item(lower_value, op='mean')
-                total[l_idx:r_idx] &= (vector[l_idx:r_idx] >= lower_value)
+                to_discard = (vector[l_idx:r_idx] <= lower_value) & total[l_idx:r_idx]
+
+            if to_add is not None:
+                total[l_idx:r_idx] |= to_add
+
+            if to_discard is not None:
+                total[l_idx:r_idx] &= ~to_discard
+
+        return total
+
+    def get_top_perc(self, vector):
+        total = torch.zeros_like(vector).bool()
+
+        if self.value_perc != 100:
+            for l_idx, r_idx in [(0, 100), (100, 300), (300, 700), (700, 5000)]:
+                if l_idx >= vector.size(0):
+                    continue
+
+                val = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
+                                    self.value_perc)
+                val = torch.tensor(val)
+                val = utils.distributed.all_reduce_item(val, op='mean')
+                total[l_idx:r_idx] |= vector > val
 
         return total
 
@@ -700,6 +731,9 @@ class MemTransformerLM(nn.Module):
 
                     if 'nll' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_spikes(loss)
+
+                    if 'entropy_perc' in self.bp_target:
+                        target_bp_mask = target_bp_mask | self.get_top_perc(entropy)
                 else:
                     # boundaries_to_predict is not None either in case of
                     # non-autoregressive tokenisers or iteration of spikes
