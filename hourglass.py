@@ -701,7 +701,8 @@ class MemTransformerLM(nn.Module):
             # T x B x C
             assert hidden.size(0) == target.size(0)
 
-            if getattr(self, 'boundary_predictor', None) is not None and 'entropy' in self.bp_target:
+            if getattr(self, 'boundary_predictor', None) is not None and \
+                    ('entropy' in self.bp_target or 'entropy_perc' in self.bp_target):
                 entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
                 entropy = torch.sum(entropy, dim=-1)
 
