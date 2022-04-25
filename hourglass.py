@@ -626,7 +626,7 @@ class MemTransformerLM(nn.Module):
                                     self.value_perc)
                 val = torch.tensor(val)
                 val = utils.distributed.all_reduce_item(val, op='mean')
-                total[l_idx:r_idx] |= vector > val
+                total[l_idx:r_idx] |= vector[l_idx:r_idx] > val
 
         return total
 
