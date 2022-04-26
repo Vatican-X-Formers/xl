@@ -65,7 +65,7 @@ def parse_args():
     dataset.add_argument('--data', type=str, default='../data/wikitext-103',
                          help='Location of the data corpus')
     dataset.add_argument('--dataset', type=str, default='wt103',
-                         choices=['wt103', 'lm1b', 'enwik8', 'text8'],
+                         choices=['im32', 'text8', 'cifar10'],
                          help='Dataset name')
 
     model = parser.add_argument_group('model setup')

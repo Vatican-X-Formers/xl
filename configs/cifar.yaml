@@ -1,6 +1,6 @@
-text8: &text8
-   dataset: text8
-   data: data/text8/
+cifar10: &cifar10
+   dataset: cifar10
+   data: data/cifar10/
 
 model: &model
    d_model: 512
@@ -21,12 +21,12 @@ model: &model
 boundaries: &boundaries
    boundaries_type: 'noboundaries' # Here I define boundaries created in data loader
    boundary_ids: '["_"]' # Used if type == ids
-   bp_target: ['entropy_perc'] # Here I define boundaries that can be extracted from LM objective
+   bp_target: ['entropy'] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
-   spikes_upper_perc: 60 # Used for spikes idea
-   spikes_lower_perc: 30 # Used for spikes idea
-   value_perc: 80 # Used for calculating boundaries from data
+   spikes_upper_perc: 100 # Used for spikes idea
+   spikes_lower_perc: 0 # Used for spikes idea
+   value_perc: 100 # Used for calculating boundaries from data
 
 # If I want to add parameters on top of Transformer layers
 # I do this using this group of params that define BP
@@ -68,7 +68,7 @@ train: &train
 
 default:
    train:
-      <<: *text8
+      <<: *cifar10
       <<: *model
       <<: *bp
       <<: *tokenizer

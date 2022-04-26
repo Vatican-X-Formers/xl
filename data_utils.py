@@ -111,23 +111,42 @@ class LMOrderedIterator(object):
         )
 
 
+def unpickle(file):
+    import pickle
+    with open(file, 'rb') as fo:
+        dict = pickle.load(fo, encoding='bytes')
+    return dict[b'data']
+
+
 class Corpus(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
         self.data = {}
         self.vocab = Vocab(*args, **kwargs)
 
-        for split in ['train', 'valid', 'test']:
-            dataset_path = os.path.join(path, f'{split}.txt')
-            self.vocab.count_file(dataset_path)
-            sents = []
-            with open(dataset_path, 'r', encoding='utf-8') as f:
-                for idx, line in enumerate(f):
-                    sents.append(line)
-            assert len(sents) == 1
-            sent = sents[0].replace(' ', '').replace('_', ' ')
+        if dataset == 'cifar10':
+            train = []
 
-            self.data[split] = sent
+            for i in range(1, 6, 1):
+                train.append(unpickle(f'{path}/data_batch_{i}'))
+
+            self.data['train'] = np.concatenate(train)
+            self.data['valid'] = unpickle(f'{path}/test_batch')
+            self.data['test'] = self.data['valid']
+
+            pdb.set_trace()
+        else:
+            for split in ['train', 'valid', 'test']:
+                dataset_path = os.path.join(path, f'{split}.txt')
+                self.vocab.count_file(dataset_path)
+                sents = []
+                with open(dataset_path, 'r', encoding='utf-8') as f:
+                    for idx, line in enumerate(f):
+                        sents.append(line)
+                assert len(sents) == 1
+                sent = sents[0].replace(' ', '').replace('_', ' ')
+
+                self.data[split] = sent
 
         self.vocab.build_vocab()
 
