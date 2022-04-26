@@ -406,6 +406,7 @@ class MemTransformerLM(nn.Module):
                  bp_target=[], spikes_upper_perc=100, spikes_lower_perc=0,
                  value_perc=100,
                  rl_loss_combine='',
+                 add_one_emb=False,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -414,7 +415,7 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        self.word_emb = nn.Embedding(n_token, d_model)
+        self.word_emb = nn.Embedding(n_token + add_one_emb, d_model)
         self.drop = nn.Dropout(dropout)
 
         # Relative attention specific parameters

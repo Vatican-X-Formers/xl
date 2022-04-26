@@ -409,6 +409,7 @@ def gen_model_config(args, vocab):
         'value_perc': args.value_perc,
         'rl_loss_combine': args.rl_loss_combine,
         'mask_mode': args.mask_mode,
+        'add_one_emb': args.dataset in ['im32', 'cifar10'],
         }
 
     return model_config

@@ -12,21 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import torch
 import numpy as np
-import random
+import imageio as iio
 import pdb
-from torch.utils.data import DataLoader
-
+import glob
+from torch.utils.data import DataLoader, Dataset
 import utils
 from utils.vocabulary import Vocab
 from boundary_creator import get_boundary_creator
 
 
 class LMOrderedIterator(object):
-    def __init__(self, data, bsz, tgt_len, ext_len, vocab, device,
+    def __init__(self, data, bsz, tgt_len, ext_len, vocab,
                  boundary_creator, **kwargs):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
@@ -35,7 +34,6 @@ class LMOrderedIterator(object):
         self.tgt_len = tgt_len
         self.ext_len = ext_len if ext_len is not None else 0
         self.vocab = vocab
-        self.device = device
 
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = len(data) // bsz
@@ -111,31 +109,80 @@ class LMOrderedIterator(object):
         )
 
 
-def unpickle(file):
-    import pickle
-    with open(file, 'rb') as fo:
-        dict = pickle.load(fo, encoding='bytes')
-    return dict[b'data']
+class ImageDataset(Dataset):
+    def __init__(self, filenames, bsz, **kwargs):
+        self.filenames = filenames
+        self.bsz = bsz
+
+        world_size = utils.distributed.get_world_size()
+        rank = utils.distributed.get_rank()
+
+        assert self.bsz % world_size == 0 and self.bsz >= world_size
+        self.n_batch = len(self.filenames) // self.bsz
+
+        # Discard some leftovers so that # of examples is divisible by bsz
+        self.filenames = self.filenames[:self.n_batch * self.bsz]
+        self.device = kwargs['device']
+
+        # MultiGPU dataloader
+        self.filenames = self.filenames[rank::world_size]
+        self.n_examples = len(self.filenames)
+        self.local_bsz = self.bsz // world_size
+
+    def unpickle(file):
+        import pickle
+        with open(file, 'rb') as fo:
+            dict = pickle.load(fo, encoding='bytes')
+        return dict[b'data']
+
+    def read_image(self, filename):
+        return iio.imread(filename)
+
+    def __len__(self):
+        return self.n_examples
+
+    def __getitem__(self, idx):
+        image = self.read_image(self.filenames[idx])
+        return torch.tensor(image)
+
+    def get_batch(self, batch):
+        stacked_batch = torch.stack(batch)
+        stacked_batch = stacked_batch.reshape(stacked_batch.size(0), -1)
+        stacked_batch = stacked_batch.t().long()
+        target = stacked_batch
+        input = torch.cat(
+            [
+                torch.full(size=(1, target.size(-1)), fill_value=256,
+                           device=target.device, dtype=torch.long),
+                target[:-1],
+            ]
+        )
+
+        seq_len = stacked_batch.size(0)
+        boundaries = None
+
+        return input, target, seq_len, boundaries
+
+    def get_fixlen_iter(self, start=None, shuffle=False):
+        return DataLoader(
+            self,
+            batch_size=self.local_bsz,
+            shuffle=False,
+            pin_memory=True,
+            collate_fn=self.get_batch,
+            num_workers=0
+        )
 
 
 class Corpus(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
         self.data = {}
-        self.vocab = Vocab(*args, **kwargs)
 
         if dataset == 'cifar10':
-            train = []
-
-            for i in range(1, 6, 1):
-                train.append(unpickle(f'{path}/data_batch_{i}'))
-
-            self.data['train'] = np.concatenate(train)
-            self.data['valid'] = unpickle(f'{path}/test_batch')
-            self.data['test'] = self.data['valid']
-
-            pdb.set_trace()
-        else:
+            pass
+        elif dataset == 'text8':
+            self.vocab = Vocab(*args, **kwargs)
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
                 self.vocab.count_file(dataset_path)
@@ -148,23 +195,32 @@ class Corpus(object):
 
                 self.data[split] = sent
 
-        self.vocab.build_vocab()
+            self.vocab.build_vocab()
+        elif dataset == 'im32':
+            self.vocab = [i for i in range(256)]
+
+            for split in ['valid']:
+                self.data[split] = [filename for filename in
+                                    glob.glob(f'{path}{split}/*')]
+            for split in ['train', 'test']:
+                self.data[split] = self.data['valid']
 
     def extend_kwargs_for_bc(self, **kwargs):
         kwargs['boundary_ids'] = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
         return kwargs
 
     def get_iterator(self, split, **kwargs):
-        kwargs = self.extend_kwargs_for_bc(**kwargs)
-        return LMOrderedIterator(
-            data=self.data[split],
-            boundary_creator=get_boundary_creator(**kwargs),
-            vocab=self.vocab,
-            **kwargs
-        )
+        if self.dataset == 'text8':
+            kwargs = self.extend_kwargs_for_bc(**kwargs)
+            return LMOrderedIterator(
+                data=self.data[split],
+                boundary_creator=get_boundary_creator(**kwargs),
+                vocab=self.vocab,
+                **kwargs
+            )
+        elif self.dataset in ['im32', 'cifar10']:
+            return ImageDataset(filenames=self.data[split], **kwargs)
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
-    corpus = Corpus(datadir, dataset, **kwargs)
-
-    return corpus
+    return Corpus(datadir, dataset, **kwargs)
