@@ -170,7 +170,7 @@ class ImageDataset(Dataset):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=0
+            num_workers=4
         )
 
 
@@ -199,10 +199,10 @@ class Corpus(object):
         elif dataset == 'im32':
             self.vocab = [i for i in range(256)]
 
-            for split in ['valid']:
+            for split in ['train', 'valid']:
                 self.data[split] = [filename for filename in
                                     glob.glob(f'{path}{split}/*')]
-            for split in ['train', 'test']:
+            for split in ['test']:
                 self.data[split] = self.data['valid']
 
     def extend_kwargs_for_bc(self, **kwargs):
