@@ -159,7 +159,7 @@ class ImageDataset(Dataset):
             ]
         )
         boundaries = self.boundary_creator.get_boundaries(txt=None,
-                                                          tensor=input[::3])
+                                                          tensor=input)
         if boundaries is not None:
             boundaries = boundaries.t().bool().contiguous()
 
