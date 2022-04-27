@@ -147,6 +147,7 @@ class ImageDataset(Dataset):
 
     def get_batch(self, batch):
         stacked_batch = torch.stack(batch)
+        stacked_batch = stacked_batch[:, :, :, 1]
         stacked_batch = stacked_batch.reshape(stacked_batch.size(0), -1)
         stacked_batch = stacked_batch.t().long()
         target = stacked_batch
@@ -170,7 +171,7 @@ class ImageDataset(Dataset):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=0
+            num_workers=4
         )
 
 
