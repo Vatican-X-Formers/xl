@@ -472,7 +472,7 @@ class MemTransformerLM(nn.Module):
                 self.spikes_lower_perc = spikes_lower_perc
                 self.value_perc = value_perc
 
-        self.final_cast = nn.Linear(d_model, n_token)
+        self.final_cast = nn.Linear(d_model, n_token * 3)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.same_length = same_length
@@ -654,6 +654,11 @@ class MemTransformerLM(nn.Module):
         word_emb = self.word_emb(data)
         hidden = self.drop(word_emb)
 
+        hidden = torch.cat([
+            hidden[0:1],
+            torch.nn.functional.avg_pool1d(hidden[1:-2].permute(1, 2, 0), 3).permute(2, 0, 1)
+        ], dim=0)
+
         loss_boundaries = torch.tensor(0, dtype=data.dtype, device=data.device)
         upsampling_mask, residual = None, None
 
@@ -697,15 +702,17 @@ class MemTransformerLM(nn.Module):
 
         hidden = hidden[-tgt_len:]
         logit = self.final_cast(hidden)
+        logit = logit.resize(logit.size(0) * 3, logit.size(1), logit.size(2) // 3)
 
         if self.training or target is not None:
             # T x B x C
-            assert hidden.size(0) == target.size(0)
+            assert logit.size(0) == target.size(0)
 
             if getattr(self, 'boundary_predictor', None) is not None and \
                     ('entropy' in self.bp_target or 'entropy_perc' in self.bp_target):
                 entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
                 entropy = torch.sum(entropy, dim=-1)
+                entropy = entropy.reshape(entropy.size(0) // 3, entropy.size(1), -1).sum(-1)
 
             logit = logit.view(-1, logit.size(-1))
             target = target.view(-1)
@@ -722,7 +729,7 @@ class MemTransformerLM(nn.Module):
 
                 # Get final target mask to supervise boundary predictor
                 if len(self.bp_target) and boundaries_to_predict is None:
-                    target_bp_mask = torch.zeros(loss.size(), device=loss.device,
+                    target_bp_mask = torch.zeros((1024, loss.size(1)), device=loss.device,
                                                  dtype=torch.bool)
 
                     if 'spaces' in self.bp_target:
