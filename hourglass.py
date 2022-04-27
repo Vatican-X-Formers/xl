@@ -426,7 +426,7 @@ class MemTransformerLM(nn.Module):
         self.pre_lnorm = pre_lnorm
         if self.pre_lnorm:
             self.layer_norms = nn.ModuleList([
-                nn.LayerNorm(d_model) for _ in range(3)
+                nn.LayerNorm(d_model) for _ in range(1)
             ])
 
         def create_decoder_layers(n_layers):
@@ -649,6 +649,7 @@ class MemTransformerLM(nn.Module):
         # tgt_len = target.size(0)
         tgt_len = target.size(0) if target is not None else data.size(0)
 
+
         # Token_ids to vector embeddings
         # T x B x C
         word_emb = self.word_emb(data)
@@ -692,11 +693,11 @@ class MemTransformerLM(nn.Module):
                     layers=layers,
                 )
                 if self.pre_lnorm:
-                    assert NotImplementedError
-                    # hidden = self.layer_norms[mems_index](hidden)
+                    hidden = self.layer_norms[0](hidden)
 
         hidden = hidden[-tgt_len:]
         logit = self.final_cast(hidden)
+
 
         if self.training or target is not None:
             # T x B x C
