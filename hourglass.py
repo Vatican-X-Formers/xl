@@ -770,6 +770,9 @@ class MemTransformerLM(nn.Module):
                     stats[f'{k}'] = v
 
                 stats['loss_boundaries'] = loss_boundaries.item()
+                for i in range(3):
+                    stats[f'prop_{i}'] = target_bp_mask[i::3].sum().item() / target_bp_mask.sum().item()
+
 
             return loss, stats, loss_boundaries, target_bp_mask
         else:

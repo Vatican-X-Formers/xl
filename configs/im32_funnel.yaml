@@ -1,6 +1,6 @@
-cifar10: &cifar10
-   dataset: cifar10
-   data: data/cifar10/
+im32: &im32
+   dataset: im32
+   data: data/im32/
 
 model: &model
    d_model: 512
@@ -10,12 +10,12 @@ model: &model
    dropout: 0.1
    dropatt: 0.0
    pre_lnorm: false
-   funnel_config: "[2, (8,), 2]"
+   funnel_config: "[2, (6,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
    activation_function: relu
    gather_stats: ['shortened_length']
-   mask_mode: 'boundary_starts_group'
+   mask_mode: 'boundary_ends_group'
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
@@ -42,8 +42,8 @@ tokenizer: &tokenizer
 
 eval: &eval
    eval_interval: 10000
-   eval_tgt_lengths: [512]
-   eval_total_lengths: [2048]
+   eval_tgt_lengths: [3072]
+   eval_total_lengths: [3072]
    text_generation_interval: 25000
 
 optim: &optim
@@ -61,14 +61,14 @@ train: &train
    multi_gpu: ddp
    cuda: true
    max_step: 200000
-   tgt_len: 2048
+   tgt_len: 3072
    batch_size: 8
    batch_chunk: 1
    log_interval: 100 
 
 default:
    train:
-      <<: *cifar10
+      <<: *im32
       <<: *model
       <<: *bp
       <<: *tokenizer
