@@ -110,9 +110,10 @@ class LMOrderedIterator(object):
 
 
 class ImageDataset(Dataset):
-    def __init__(self, filenames, bsz, **kwargs):
+    def __init__(self, filenames, bsz, boundary_creator, **kwargs):
         self.filenames = filenames
         self.bsz = bsz
+        self.boundary_creator = boundary_creator
 
         world_size = utils.distributed.get_world_size()
         rank = utils.distributed.get_rank()
@@ -157,10 +158,14 @@ class ImageDataset(Dataset):
                 target[:-1],
             ]
         )
-        # Add contiguous
+        # TODO Add contiguous
+
+        boundaries = self.boundary_creator.get_boundaries(txt=None,
+                                                          tensor=input[::3])
+        if boundaries is not None:
+            boundaries = boundaries.t().bool().contiguous()
 
         seq_len = stacked_batch.size(0)
-        boundaries = None
 
         return input, target, seq_len, boundaries
 
@@ -220,7 +225,11 @@ class Corpus(object):
                 **kwargs
             )
         elif self.dataset in ['im32', 'cifar10']:
-            return ImageDataset(filenames=self.data[split], **kwargs)
+            return ImageDataset(
+                filenames=self.data[split],
+                boundary_creator=get_boundary_creator(**kwargs),
+                **kwargs
+            )
 
 
 def get_lm_corpus(datadir, dataset, **kwargs):
