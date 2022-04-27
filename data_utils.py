@@ -157,6 +157,7 @@ class ImageDataset(Dataset):
                 target[:-1],
             ]
         )
+        # Add contiguous
 
         seq_len = stacked_batch.size(0)
         boundaries = None
@@ -199,10 +200,10 @@ class Corpus(object):
         elif dataset == 'im32':
             self.vocab = [i for i in range(256)]
 
-            for split in ['valid']:
+            for split in ['train', 'valid']:
                 self.data[split] = [filename for filename in
                                     glob.glob(f'{path}{split}/*')]
-            for split in ['train', 'test']:
+            for split in ['test']:
                 self.data[split] = self.data['valid']
 
     def extend_kwargs_for_bc(self, **kwargs):
