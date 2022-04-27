@@ -649,7 +649,6 @@ class MemTransformerLM(nn.Module):
         # tgt_len = target.size(0)
         tgt_len = target.size(0) if target is not None else data.size(0)
 
-
         # Token_ids to vector embeddings
         # T x B x C
         word_emb = self.word_emb(data)
@@ -697,7 +696,6 @@ class MemTransformerLM(nn.Module):
 
         hidden = hidden[-tgt_len:]
         logit = self.final_cast(hidden)
-
 
         if self.training or target is not None:
             # T x B x C
@@ -773,7 +771,6 @@ class MemTransformerLM(nn.Module):
                 stats['loss_boundaries'] = loss_boundaries.item()
                 for i in range(3):
                     stats[f'prop_{i}'] = target_bp_mask[i::3].sum().item() / target_bp_mask.sum().item()
-
 
             return loss, stats, loss_boundaries, target_bp_mask
         else:
