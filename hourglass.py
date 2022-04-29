@@ -276,6 +276,8 @@ class Downsampler(nn.Module):
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
         elif mode == 'weighted_mean':
             self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
+        elif mode == 'last_elem':
+            self.leftmost_group = nn.Parameter(torch.Tensor(1, 1, embedding_dim).zero_())
 
     def forward(self, x, downsampling_mask, size_of_groups):
         # Input is of shape T x B x C
@@ -319,6 +321,10 @@ class Downsampler(nn.Module):
             fn = torch.nn.functional.softmax
             downsampling_mask = fn(downsampling_mask * torch.linspace(0, 10 * downsampling_mask.size(1), downsampling_mask.size(1), device=downsampling_mask.device)[None, :, None], dim=1)
             downsampled_data = torch.einsum('tbc, bts -> sbc', x, downsampling_mask)
+        elif self.mode == 'last_elem':
+            tmp = size_of_groups.cumsum(-1) - 1
+            tmp = tmp.transpose(0, 1)
+            downsampled_data = torch.gather(x, dim=0, index=tmp.unsqueeze(-1).repeat(1, 1, x.size(-1)))
 
         downsampled_data = torch.cat(
             [self.leftmost_group.repeat(1, x.size(1), 1), downsampled_data], dim=0
