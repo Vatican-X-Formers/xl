@@ -64,6 +64,7 @@ class LMOrderedIterator(object):
         self.n_batch = (self.data_len + self.tgt_len - 1) // self.tgt_len
 
         self.last_iter = None
+        self.device = kwargs['device']
 
     def roll(self, seed):
         raise NotImplementedError
