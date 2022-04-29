@@ -413,6 +413,7 @@ class MemTransformerLM(nn.Module):
                  value_perc=100,
                  rl_loss_combine='',
                  add_one_emb=False,
+                 group_threshold=None,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -477,6 +478,7 @@ class MemTransformerLM(nn.Module):
                 self.spikes_upper_perc = spikes_upper_perc
                 self.spikes_lower_perc = spikes_lower_perc
                 self.value_perc = value_perc
+                self.group_threshold = group_threshold
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -653,6 +655,16 @@ class MemTransformerLM(nn.Module):
 
         return total
 
+    def get_equal_sum(self, vector):
+        tmp = vector.cumsum(0) / self.group_threshold
+        tmp = tmp.int()
+        tmp = tmp[1:] > tmp[:-1]
+        tmp = torch.cat([
+            vector[0:1] > self.group_threshold, tmp], dim=0)
+        tmp = tmp.bool()
+
+        return tmp
+
     def forward(self,
                 data,
                 target,
@@ -725,7 +737,8 @@ class MemTransformerLM(nn.Module):
 
             if getattr(self, 'boundary_predictor', None) is not None and \
                     ('entropy' in self.bp_target or 'entropy_perc' in
-                     self.bp_target or 'subs_entropy' in self.bp_target):
+                     self.bp_target or 'subs_entropy' in self.bp_target or
+                     'group_entropy' in self.bp_target):
                 entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
                 entropy = torch.sum(entropy, dim=-1)
 
@@ -761,6 +774,9 @@ class MemTransformerLM(nn.Module):
 
                     if 'subs_entropy' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_subs_elems(entropy)
+
+                    if 'group_entropy' in self.bp_target:
+                        target_bp_mask = target_bp_mask | self.get_equal_sum(entropy)
                 else:
                     # boundaries_to_predict is not None either in case of
                     # non-autoregressive tokenisers or iteration of spikes

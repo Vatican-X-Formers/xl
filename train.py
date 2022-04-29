@@ -133,6 +133,7 @@ def parse_args():
     boundaries.add_argument('--spikes_upper_perc', type=int, default=100)
     boundaries.add_argument('--spikes_lower_perc', type=int, default=0)
     boundaries.add_argument('--value_perc', type=int, default=100)
+    boundaries.add_argument('--group_threshold', type=float, default=None)
     boundaries.add_argument('--n_iters', type=int, default=0)
 
     opt = parser.add_argument_group('optimizer setup')
@@ -410,6 +411,7 @@ def gen_model_config(args, vocab):
         'rl_loss_combine': args.rl_loss_combine,
         'mask_mode': args.mask_mode,
         'add_one_emb': args.dataset in ['im32', 'cifar10'],
+        'group_threshold': args.group_threshold,
         }
 
     return model_config
