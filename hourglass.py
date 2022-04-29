@@ -637,6 +637,22 @@ class MemTransformerLM(nn.Module):
 
         return total
 
+    def get_subs_elems(self, vector):
+        total = torch.zeros_like(vector).bool()
+        vector = torch.cat([torch.zeros((1, vector.size(1)), dtype=vector.dtype, device=vector.device), vector[1:] - vector[:-1]], dim=0)
+
+        for l_idx, r_idx in [(0, 100), (100, 300), (300, 700), (700, 5000)]:
+            if l_idx >= vector.size(0):
+                continue
+
+            val = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
+                                self.value_perc)
+            val = torch.tensor(val)
+            val = utils.distributed.all_reduce_item(val, op='mean')
+            total[l_idx:r_idx] |= vector[l_idx:r_idx] > val
+
+        return total
+
     def forward(self,
                 data,
                 target,
@@ -708,7 +724,8 @@ class MemTransformerLM(nn.Module):
             assert hidden.size(0) == target.size(0)
 
             if getattr(self, 'boundary_predictor', None) is not None and \
-                    ('entropy' in self.bp_target or 'entropy_perc' in self.bp_target):
+                    ('entropy' in self.bp_target or 'entropy_perc' in
+                     self.bp_target or 'subs_entropy' in self.bp_target):
                 entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
                 entropy = torch.sum(entropy, dim=-1)
 
@@ -741,6 +758,9 @@ class MemTransformerLM(nn.Module):
 
                     if 'entropy_perc' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_top_perc(entropy)
+
+                    if 'subs_entropy' in self.bp_target:
+                        target_bp_mask = target_bp_mask | self.get_subs_elems(entropy)
                 else:
                     # boundaries_to_predict is not None either in case of
                     # non-autoregressive tokenisers or iteration of spikes
