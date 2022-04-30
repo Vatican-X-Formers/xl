@@ -738,7 +738,8 @@ class MemTransformerLM(nn.Module):
             if getattr(self, 'boundary_predictor', None) is not None and \
                     ('entropy' in self.bp_target or 'entropy_perc' in
                      self.bp_target or 'subs_entropy' in self.bp_target or
-                     'group_entropy' in self.bp_target):
+                     'group_entropy' in self.bp_target or 'im32_entropy' in
+                     self.bp_target):
                 entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
                 entropy = torch.sum(entropy, dim=-1)
 
@@ -765,6 +766,10 @@ class MemTransformerLM(nn.Module):
 
                     if 'entropy' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_spikes(entropy)
+
+                    if 'im32_entropy' in self.bp_target:
+                        entropy = entropy.unsqueeze(1).reshape(entropy.size(0) // 3, 3, -1).sum(1)
+                        target_bp_mask[2::3] |= self.get_spikes(entropy)
 
                     if 'nll' in self.bp_target:
                         target_bp_mask = target_bp_mask | self.get_spikes(loss)

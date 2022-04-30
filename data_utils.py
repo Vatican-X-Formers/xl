@@ -208,8 +208,11 @@ class Corpus(object):
             self.vocab = [i for i in range(256)]
 
             for split in ['train', 'valid']:
-                self.data[split] = [filename for filename in
-                                    glob.glob(f'{path}{split}/*')]
+                self.data[split] = []
+                with open(f'{path}{split}.txt', 'r+') as file:
+                    for line in file:
+                        self.data[split].append(f'{path}{line.strip()}')
+
             for split in ['test']:
                 self.data[split] = self.data['valid']
 
