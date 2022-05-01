@@ -353,8 +353,8 @@ class BoundaryPredictor(nn.Module):
             raise NotImplementedError
 
         if mode == 'default':
-            # self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
-            self.loss = nn.BCEWithLogitsLoss()
+            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+            # self.loss = nn.BCEWithLogitsLoss()
         elif mode in ['equalize']:
             # It worked a bit worse than default
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
@@ -365,7 +365,7 @@ class BoundaryPredictor(nn.Module):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
 
-        if self.mode in ['default']:
+        if self.mode in ['default', 'equalize']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
         else:
             raise NotImplementedError
@@ -397,7 +397,13 @@ class BoundaryPredictor(nn.Module):
         return stats
 
     def calc_loss(self, preds, gt):
-        return self.loss(preds, gt.float())
+        if self.mode == 'equalize':
+            loss = self.loss(preds, gt.float())
+            positive_loss = loss[gt].mean()
+            negative_loss = loss[~gt].mean()
+            return negative_loss + positive_loss
+        elif self.mode == 'default':
+            return self.loss(preds, gt.float())
 
 
 class MemTransformerLM(nn.Module):
