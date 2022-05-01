@@ -85,8 +85,9 @@ class LMOrderedIterator(object):
         beg_idx = max(0, i - self.ext_len)
 
         current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
-        data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ',
-                                                                      '_')).unsqueeze(1) for j in range(batch_size)]
+        # Remember about backwards compatibility
+        # data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ', '_')).unsqueeze(1) for j in range(batch_size)]
+        data = [self.vocab.convert_to_tensor(current_batch[j]).unsqueeze(1) for j in range(batch_size)]
         data = torch.cat(data, dim=1).long().contiguous()
         target = data[-seq_len:]
         boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
@@ -187,9 +188,7 @@ class Corpus(object):
         self.dataset = dataset
         self.data = {}
 
-        if dataset == 'cifar10':
-            pass
-        elif dataset == 'text8':
+        if dataset == 'text8':
             self.vocab = Vocab(*args, **kwargs)
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
@@ -215,13 +214,27 @@ class Corpus(object):
 
             for split in ['test']:
                 self.data[split] = self.data['valid']
+        elif dataset == 'wiki40b_fi':
+            self.vocab = Vocab(*args, **kwargs)
+            for split in ['train', 'valid', 'test']:
+                dataset_path = os.path.join(path, f'{split}.txt')
+                sents = []
+                with open(dataset_path, 'r', encoding='utf-8') as f:
+                    for idx, line in enumerate(f):
+                        sents.append(line)
+                assert len(sents) == 1
+                sent = sents[0]
+                self.vocab.counter.update(sent)
+                self.data[split] = sent
+
+            self.vocab.build_vocab()
 
     def extend_kwargs_for_bc(self, **kwargs):
         kwargs['boundary_ids'] = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
         return kwargs
 
     def get_iterator(self, split, **kwargs):
-        if self.dataset == 'text8':
+        if self.dataset in ['text8', 'wiki40b_fi']:
             kwargs = self.extend_kwargs_for_bc(**kwargs)
             return LMOrderedIterator(
                 data=self.data[split],

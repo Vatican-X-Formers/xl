@@ -109,7 +109,7 @@ def parse_args():
     models_bp = parser.add_argument_group('models boundary predictor params')
     models_bp.add_argument('--bp_mode', type=str, default='none')
     models_bp.add_argument('--bp_capacity', type=str, default='none')
-    models_bp.add_argument('--bp_weight', type=float, default=None)
+    models_bp.add_argument('--bp_weight', type=float, default=1.0)
     models_bp.add_argument('--bp_switch_step', type=int, default=None)
 
     boundaries = parser.add_argument_group('boundary creator')
