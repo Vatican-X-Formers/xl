@@ -296,6 +296,25 @@ def weights_init(m, args):
             init_weight(m.r_r_bias, args)
 
 
+def get_logits(model, data, boundaries, step=200000):
+    if getattr(model, 'boundary_predictor', None) is not None:
+        logits = model(
+            data=data,
+            target=None,
+            boundaries_to_predict=boundaries,
+            step=step
+        )
+    else:
+        logits = model(
+            data=data,
+            target=None,
+            boundaries_to_use=boundaries,
+            step=step
+        )
+
+    return logits
+
+
 def sample_generation(vocab, boundary_creator, model,
                       temp=1.0, start_seq=[0], steps=100,
                       dataset='text8', step=0):
@@ -310,15 +329,10 @@ def sample_generation(vocab, boundary_creator, model,
             boundaries = boundary_creator.get_boundaries(
                 txt=vocab.convert_to_sent(data, mode='real'),
                 tensor=data
-            ).t().bool().contiguous()[:-1, :]
+            ).t().bool().contiguous()
 
             # Forward through the model
-            logits = model(
-                data=data,
-                target=None,
-                boundaries=boundaries,
-                step=step
-            )
+            logits = get_logits(model, data, boundaries)
 
             # Transform logits to probs
             probs = F.softmax(logits[-1, 0, :], dim=0)

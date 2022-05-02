@@ -75,7 +75,7 @@ class Vocab(object):
                 break
             self.add_symbol(sym)
 
-        # assert (self.idx2sym[0] == '_') or (self.idx2sym[0] == ' '), 'first symbol is not a space'
+        assert ((self.idx2sym[0] == '_') or (self.idx2sym[0] == ' ')), 'first symbol is not a space'
 
         print('final vocab size {} from {} unique tokens'.format(
             len(self), len(self.counter)))

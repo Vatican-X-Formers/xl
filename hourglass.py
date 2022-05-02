@@ -334,11 +334,13 @@ class Downsampler(nn.Module):
 
 
 class BoundaryPredictor(nn.Module):
-    def __init__(self, mode, capacity, d_model, weight, d_inner=2048, dropout=0.0, threshold=0.5):
+    def __init__(self, mode, capacity, d_model, weight, d_inner=2048,
+                 dropout=0.0, threshold=0.5, max_len=1237):
         super().__init__()
         self.mode = mode
         self.threshold = threshold
         self.weight = weight
+        self.max_len = max_len
 
         if capacity == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
@@ -353,8 +355,8 @@ class BoundaryPredictor(nn.Module):
             raise NotImplementedError
 
         if mode == 'default':
-            self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
-            # self.loss = nn.BCEWithLogitsLoss()
+            # self.loss = nn.BCEWithLogitsLoss(weight=torch.tensor([weight]).float())
+            self.loss = nn.BCEWithLogitsLoss()
         elif mode in ['equalize']:
             # It worked a bit worse than default
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
@@ -373,7 +375,12 @@ class BoundaryPredictor(nn.Module):
         return preds
 
     def discretize(self, preds):
-        return torch.sigmoid(preds) >= self.threshold
+        out = torch.sigmoid(preds) >= self.threshold
+        cur_threshold = self.threshold
+        while out.sum(0).max().item() > self.max_len:
+            cur_threshold = (1 + cur_threshold) / 2
+            out = torch.sigmoid(preds) >= cur_threshold
+        return out
 
     def calc_stats(self, preds, gt):
         TP = ((preds == gt) & preds).sum().item()
@@ -401,7 +408,7 @@ class BoundaryPredictor(nn.Module):
             loss = self.loss(preds, gt.float())
             positive_loss = loss[gt].mean()
             negative_loss = loss[~gt].mean()
-            return negative_loss + positive_loss
+            return negative_loss + positive_loss * self.weight
         elif self.mode == 'default':
             return self.loss(preds, gt.float())
 
@@ -824,6 +831,7 @@ class MemTransformerLM(nn.Module):
                 stats['loss_boundaries'] = loss_boundaries.item()
                 for i in range(3):
                     stats[f'prop_{i}'] = target_bp_mask[i::3].sum().item() / target_bp_mask.sum().item()
+                stats['avg_tgt_shorten_length'] = target_bp_mask.sum(0).float().mean().item()
 
             return loss, stats, loss_boundaries, target_bp_mask
         else:
