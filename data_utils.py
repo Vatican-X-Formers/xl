@@ -14,10 +14,8 @@
 
 import os
 import torch
-import numpy as np
 import imageio as iio
 import pdb
-import glob
 from torch.utils.data import DataLoader, Dataset
 import utils
 from utils.vocabulary import Vocab
@@ -26,7 +24,7 @@ from boundary_creator import get_boundary_creator
 
 class LMOrderedIterator(object):
     def __init__(self, data, bsz, tgt_len, ext_len, vocab,
-                 boundary_creator, **kwargs):
+                 boundary_creator, dataset, **kwargs):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
@@ -34,6 +32,7 @@ class LMOrderedIterator(object):
         self.tgt_len = tgt_len
         self.ext_len = ext_len if ext_len is not None else 0
         self.vocab = vocab
+        self.dataset = dataset
 
         # Work out how cleanly we can divide the dataset into bsz parts.
         n_step = len(data) // bsz
@@ -85,9 +84,13 @@ class LMOrderedIterator(object):
         beg_idx = max(0, i - self.ext_len)
 
         current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
-        # Remember about backwards compatibility
-        # data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ', '_')).unsqueeze(1) for j in range(batch_size)]
-        data = [self.vocab.convert_to_tensor(current_batch[j]).unsqueeze(1) for j in range(batch_size)]
+
+        # Backwards compatibility :/
+        if self.dataset == 'text8':
+            data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ', '_')).unsqueeze(1) for j in range(batch_size)]
+        elif self.dataset.startswith('wiki40b'):
+            data = [self.vocab.convert_to_tensor(current_batch[j]).unsqueeze(1) for j in range(batch_size)]
+
         data = torch.cat(data, dim=1).long().contiguous()
         target = data[-seq_len:]
         boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
@@ -240,6 +243,7 @@ class Corpus(object):
                 data=self.data[split],
                 boundary_creator=get_boundary_creator(**kwargs),
                 vocab=self.vocab,
+                dataset=self.dataset,
                 **kwargs
             )
         elif self.dataset in ['im32', 'cifar10']:
