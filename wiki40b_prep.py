@@ -18,23 +18,14 @@ import re
 
 
 markers = ['\n_START_ARTICLE_\n', '\n_START_SECTION_\n', '\n_START_PARAGRAPH_\n', '_NEWLINE_']
-specials = ['洙', '性', '金', '수']
-
-
-def only_whitelist(text):
-    # TODO
-    # remember about chinese shit
-    return text
+specials = ['\u008A', '\u008B', '\u008C', '\u008D']
+unk = '\u008E'
 
 
 def transliteration_cleaners(text):
     '''Pipeline for non-English text that transliterates to ASCII.'''
-    text = unidecode.unidecode(text)
-    for marker, special in zip(markers, specials):
-        text = text.replace(marker, f' {special} ')
-    text = lowercase(text)
+    # text = unidecode.unidecode(text)
     text = only_whitelist(text)
-    text = collapse_whitespace(text)
     return text.strip()
 
 
@@ -49,6 +40,7 @@ def collapse_whitespace(text):
 
 mapping = {}
 base_path = 'data/wiki40b/'
+threshold = 5
 
 # for language in ['fi', 'de']:
 for language in ['fi']:
@@ -59,13 +51,22 @@ for language in ['fi']:
         # Concat articles
         text = ' '.join(dataset['text'])
 
-        # Remove repeated spaces
-        text = transliteration_cleaners(text)
+        for sp in specials:
+            assert sp not in text
+        assert unk not in text
 
-        counter = Counter(text)
-        for idx, (k, v) in enumerate(counter.items()):
-            mapping[k] = idx
+        for marker, special in zip(markers, specials):
+            text = text.replace(marker, f' {special} ')
 
-        with open(f'{base_path}wiki40b_{language}_{split}.txt', 'w+') as file:
-            # text = str(' '.join([str(mapping[c]) for c in text]))
+        text = lowercase(text)
+        text = collapse_whitespace(text)
+        text = text.strip()
+
+        if split == 'train':
+            counter = Counter(text)
+            allowed_chars = [k for k, v in counter.items() if v > threshold]
+
+        text = ''.join([c if c in allowed_chars else unk for c in text])
+
+        with open(f'{base_path}/{language}/{split}.txt', 'w+') as file:
             file.write(text)
