@@ -723,7 +723,14 @@ class MemTransformerLM(nn.Module):
                     boundaries_probs = self.boundary_predictor(hidden)
                     if boundaries_to_use is None:
                         assert boundaries_to_predict is not None or len(self.bp_target) > 0
-                        boundaries_to_use = self.get_spikes(boundaries_probs)
+                        if 'subs_entropy' in self.bp_target:
+                            boundaries_to_use = self.get_subs_elems(boundaries_probs)
+
+                        if 'entropy' in self.bp_target:
+                            boundaries_to_use = self.get_spikes(boundaries_probs)
+
+                        if 'entropy_perc' in self.bp_target:
+                            boundaries_to_use = self.get_top_perc(boundaries_probs)
 
                 # Acrual moment of real mask creation that are further used in
                 # downsampler and upsampler
