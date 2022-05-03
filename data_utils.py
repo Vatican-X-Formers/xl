@@ -86,8 +86,10 @@ class LMOrderedIterator(object):
 
         current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
         # Remember about backwards compatibility
-        # data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ', '_')).unsqueeze(1) for j in range(batch_size)]
-        data = [self.vocab.convert_to_tensor(current_batch[j]).unsqueeze(1) for j in range(batch_size)]
+        # This is for text8
+        data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ', '_')).unsqueeze(1) for j in range(batch_size)]
+        # This is for wikitext
+        # data = [self.vocab.convert_to_tensor(current_batch[j]).unsqueeze(1) for j in range(batch_size)]
         data = torch.cat(data, dim=1).long().contiguous()
         target = data[-seq_len:]
         boundaries = self.boundary_creator.get_boundaries(txt=current_batch,

@@ -360,6 +360,9 @@ class BoundaryPredictor(nn.Module):
         elif mode in ['equalize']:
             # It worked a bit worse than default
             self.loss = nn.BCEWithLogitsLoss(reduction='none')
+        elif mode in ['mse']:
+            # It worked a bit worse than default
+            self.loss = nn.MSELoss()
         else:
             raise NotImplementedError
 
@@ -367,7 +370,7 @@ class BoundaryPredictor(nn.Module):
         # Boundaries are of shape [seq_len x bs]
         # Hidden is of shape [seq_len x bs x d_model]
 
-        if self.mode in ['default', 'equalize']:
+        if self.mode in ['default', 'equalize', 'mse']:
             preds = self.boundary_predictor(hidden).squeeze(-1)
         else:
             raise NotImplementedError
@@ -411,6 +414,8 @@ class BoundaryPredictor(nn.Module):
             return negative_loss + positive_loss * self.weight
         elif self.mode == 'default':
             return self.loss(preds, gt.float())
+        elif self.mode == 'mse':
+            return self.loss(preds, gt)
 
 
 class MemTransformerLM(nn.Module):
@@ -718,10 +723,7 @@ class MemTransformerLM(nn.Module):
                     boundaries_probs = self.boundary_predictor(hidden)
                     if boundaries_to_use is None:
                         assert boundaries_to_predict is not None or len(self.bp_target) > 0
-                        # If there are no other boundaries to use I need to
-                        # create one with my boundary predictor by discretizing
-                        # probs matrix
-                        boundaries_to_use = self.boundary_predictor.discretize(boundaries_probs)
+                        boundaries_to_use = self.get_spikes(boundaries_probs)
 
                 # Acrual moment of real mask creation that are further used in
                 # downsampler and upsampler
@@ -762,78 +764,14 @@ class MemTransformerLM(nn.Module):
             loss = self.crit(logit, target)
             loss = loss.view(tgt_len, -1)
 
-            target_bp_mask = None
-
             if getattr(self, 'boundary_predictor', None) is not None:
-                # This branch in which we train bp is only open for
-                # non-autoregressive tokenisers or extracting boundaries from
-                # data and iteration
-
-                # Get final target mask to supervise boundary predictor
-                if len(self.bp_target) and boundaries_to_predict is None:
-                    target_bp_mask = torch.zeros(loss.size(), device=loss.device,
-                                                 dtype=torch.bool)
-
-                    if 'spaces' in self.bp_target:
-                        target_bp_mask = target_bp_mask | (data[-tgt_len:] == 0)
-
-                    if 'entropy' in self.bp_target:
-                        target_bp_mask = target_bp_mask | self.get_spikes(entropy)
-
-                    if 'im32_entropy' in self.bp_target:
-                        entropy = entropy.unsqueeze(1).reshape(entropy.size(0) // 3, 3, -1).sum(1)
-                        target_bp_mask[2::3] |= self.get_spikes(entropy)
-
-                    if 'nll' in self.bp_target:
-                        target_bp_mask = target_bp_mask | self.get_spikes(loss)
-
-                    if 'entropy_perc' in self.bp_target:
-                        target_bp_mask = target_bp_mask | self.get_top_perc(entropy)
-
-                    if 'subs_entropy' in self.bp_target:
-                        target_bp_mask = target_bp_mask | self.get_subs_elems(entropy)
-
-                    if 'group_entropy' in self.bp_target:
-                        target_bp_mask = target_bp_mask | self.get_equal_sum(entropy)
-                else:
-                    # boundaries_to_predict is not None either in case of
-                    # non-autoregressive tokenisers or iteration of spikes
-
-                    assert boundaries_to_predict is not None
-                    target_bp_mask = boundaries_to_predict[-tgt_len:]
-
+                entropy = entropy[-tgt_len:]
                 boundaries_probs = boundaries_probs[-tgt_len:]
-                boundaries_to_use = boundaries_to_use[-tgt_len:]
-
-                loss_boundaries = self.boundary_predictor.calc_loss(boundaries_probs,
-                                                                    target_bp_mask)
-                # I calculate the stats of boundary predictor with respect to
-                # the boundaries I have used for down/up-sampling
-
-                # In case of iteration or situation where I'm given masks like
-                # in non-autoregressive tokenisers the boundary predictor just
-                # tries to predict boundaries based on data, while boundaries
-                # are given from outside of the model. In case of iteration the
-                # algorithm used for nll spikes has to be autoregressive
-
-                # In case of extracting boundaries from the data I predict some
-                # boundaries, then for this boundaries I get some loss for each
-                # element from which I can again calculate perplexity spikes.
-                # It also seems like an infinite iteration, as unless the
-                # spikes converge to a single boundary mask then bp will never
-                # converge too.
-                bp_stats = self.boundary_predictor.calc_stats(boundaries_to_use,
-                                                              target_bp_mask)
-
-                for k, v in bp_stats.items():
-                    stats[f'{k}'] = v
+                loss_boundaries = self.boundary_predictor.calc_loss(boundaries_probs, entropy)
 
                 stats['loss_boundaries'] = loss_boundaries.item()
-                for i in range(3):
-                    stats[f'prop_{i}'] = target_bp_mask[i::3].sum().item() / target_bp_mask.sum().item()
-                stats['avg_tgt_shorten_length'] = target_bp_mask.sum(0).float().mean().item()
 
-            return loss, stats, loss_boundaries, target_bp_mask
+            return loss, stats, loss_boundaries, None
         else:
             # Generation mode, we return raw logits
             return logit
