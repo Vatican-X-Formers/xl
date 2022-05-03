@@ -1,6 +1,7 @@
 wiki40b_fi: &wiki40b_fi
    dataset: wiki40b_fi
    data: data/wiki40b/fi/
+   work_dir: /workspace/checkpoints/exp
 
 model: &model
    d_model: 512
@@ -15,14 +16,14 @@ model: &model
    upsample_mode: 'average'
    activation_function: relu
    gather_stats: ['shortened_length']
-   mask_mode: 'boundary_starts_group'
+   mask_mode: 'boundary_ends_group'
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   boundaries_type: 'noboundaries' # Here I define boundaries created in data loader
-   boundary_ids: '["_"]' # Used if type == ids
-   bp_target: ['entropy'] # Here I define boundaries that can be extracted from LM objective
-   fixed_sf: 0 # Used if type == constant
+   boundaries_type: 'ids' # Here I define boundaries created in data loader
+   boundary_ids: '[" "]' # Used if type == ids
+   bp_target: ['spaces', 'entropy'] # Here I define boundaries that can be extracted from LM objective
+   fixed_sf: 2 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
    spikes_lower_perc: 0 # Used for spikes idea
@@ -32,7 +33,7 @@ boundaries: &boundaries
 # If I want to add parameters on top of Transformer layers
 # I do this using this group of params that define BP
 bp: &bp
-   bp_mode: 'default'
+   bp_mode: 'none'
    bp_capacity: 'nonlinear'
    bp_switch_step: 0 # This means I don't use teacher forcing
 
@@ -64,7 +65,7 @@ train: &train
    max_step: 200000
    tgt_len: 2048
    batch_size: 8
-   batch_chunk: 2
+   batch_chunk: 4
    log_interval: 100 
 
 default:

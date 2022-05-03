@@ -8,7 +8,7 @@ import utils
 from data_utils import get_lm_corpus
 from hourglass import MemTransformerLM
 from train import parse_args, gen_model_config, sample_generation, \
-        evaluate, get_boundary_config
+        evaluate, get_boundary_config, get_logits
 from utils.exp_utils import l2_promote
 import pdb
 
@@ -25,6 +25,34 @@ def load_checkpoint(path):
     print(f'Loading checkpoint from {path}')
     checkpoint = torch.load(path, map_location=dst)
     return checkpoint
+
+
+def autoregressive_test(data_full, boundaries_full, boundary_creator, model,
+                        steps=30, bs=2):
+    model.eval()
+
+    # data is of size time_steps x bs
+    data_full = data_full[:steps, :bs]
+    if boundaries_full is not None:
+        boundaries_full = boundaries_full[:steps, :bs]
+
+    with torch.no_grad():
+        logits = get_logits(model, data_full, boundaries_full)
+
+        for i in range(2, steps + 1, 1):
+            partial_data = data_full[:i]
+            partial_boundaries = boundary_creator.get_boundaries(
+                txt=None,
+                tensor=partial_data,
+            )
+            if partial_boundaries is not None:
+                partial_boundaries = partial_boundaries.t().bool().contiguous()
+            logits_partial = get_logits(model, partial_data, partial_boundaries)
+            assert torch.allclose(logits_partial, logits[:i], rtol=1e-5, atol=1e-5)
+
+    print('Passed autoregressive test')
+
+    model.train()
 
 
 def main():
@@ -48,6 +76,9 @@ def main():
     vocab = corpus.vocab
     args.n_token = len(vocab)
 
+    # TODO OVERRIDE
+    args.batch_size = 4
+
     val_iter = corpus.get_iterator(split='valid',
                                   bsz=args.batch_size,
                                   tgt_len=2048,
@@ -66,7 +97,8 @@ def main():
     input_data, target, seq_len, boundaries = batch
     input_data = input_data.cuda()
     target = target.cuda()
-    boundaries = boundaries.cuda()
+    if boundaries is not None:
+        boundaries = boundaries.cuda()
 
     ###########################################################################
     # Build the model
@@ -80,31 +112,92 @@ def main():
     ###########################################################################
 
     checkpoint = load_checkpoint(args.ckpt_path)
+
     if list(checkpoint['model_state'].keys())[0].startswith('module'):
         model_state = {
             k[7:]: v for k, v in checkpoint['model_state'].items()
         }
+        if 'boundary_predictor.loss.weight' in model_state:
+            del model_state['boundary_predictor.loss.weight']
     else:
         model_state = checkpoint['model_state']
 
     model.load_state_dict(model_state)
     model.eval()
 
-    target_test_len = 2048
+    pdb.set_trace()
+
+    autoregressive_test(input_data, boundaries, val_iter.boundary_creator, model, steps=30)
+    import sys
+    sys.exit()
+
+    def calc_entropy(logit):
+        entropy = -torch.nn.functional.log_softmax(logit, dim=-1) * torch.nn.functional.softmax(logit, dim=-1)
+        entropy = torch.sum(entropy, dim=-1)
+        return entropy
 
     with torch.no_grad():
-        loss, stats, _, boundaries_elem, entropy = model(
-            data=input_data[:target_test_len, 3:4],
-            target=target[:target_test_len, 3:4],
-            boundaries=None,
-            step=0,
-        )
-        loss = loss[:, 0]
+        for i in range(5):
+            input_data, target, seq_len, boundaries = data[i]
+            input_data = input_data.cuda()
+            target = target.cuda()
+            if boundaries is not None:
+                boundaries = boundaries.cuda()
 
-    pdb.set_trace()
+            l_idx = i * 300 + 100
+            input_data = input_data[l_idx:l_idx + 120, :1]
+
+            text = vocab.convert_to_sent(input_data[:, 0], mode='real')
+
+            logits = model(
+                input_data,
+                None,
+                None,
+                None,
+                0
+            )
+
+            entropy = calc_entropy(logits)
+
+            print(text)
+            print(entropy[:, 0].cpu())
+
+    import sys
+    sys.exit()
 
     boundaries_acc = []
     losses_acc = []
+
+    with torch.no_grad():
+        for i in range(30):
+            print(i)
+            input_data, target, seq_len, boundaries = data[i]
+
+            input_data = input_data.cuda()
+            target = target.cuda()
+            if boundaries is not None:
+                boundaries = boundaries.cuda()
+
+            # loss, _, _, target_bp_mask = model(
+            #     input_data,
+            #     None,
+            #     None, None, 0
+            # )
+            logits = model(
+                input_data,
+                None,
+                None, None, 0
+            )
+
+            losses_acc.append(logits)
+
+    xd = torch.cat(losses_acc, dim=1)
+    torch.save(xd, 'char.pt')
+
+    import sys
+    sys.exit(0)
+
+    target_test_len = 2048
     stats_acc = []
 
     with torch.no_grad():
@@ -131,8 +224,6 @@ def main():
                 boundaries_in_acc.append(boundaries_elem)
 
             boundaries_acc.append(boundaries_in_acc)
-
-    pdb.set_trace()
 
     sample_generation(vocab, val_iter.boundary_creator, model)
 

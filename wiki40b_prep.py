@@ -3,6 +3,7 @@ from collections import Counter
 import unidecode
 import pdb
 import re
+import os
 
 
 """
@@ -53,6 +54,7 @@ for language in ['fi']:
 
         for sp in specials:
             assert sp not in text
+
         assert unk not in text
 
         for marker, special in zip(markers, specials):
