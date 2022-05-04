@@ -718,10 +718,13 @@ class MemTransformerLM(nn.Module):
                     boundaries_probs = self.boundary_predictor(hidden)
                     if boundaries_to_use is None:
                         assert boundaries_to_predict is not None or len(self.bp_target) > 0
-                        # If there are no other boundaries to use I need to
-                        # create one with my boundary predictor by discretizing
-                        # probs matrix
-                        boundaries_to_use = self.boundary_predictor.discretize(boundaries_probs)
+                        if step < self.bp_switch_step:
+                            boundaries_to_use = torch.zeros_like(data).bool()
+                        else:
+                            # If there are no other boundaries to use I need to
+                            # create one with my boundary predictor by discretizing
+                            # probs matrix
+                            boundaries_to_use = self.boundary_predictor.discretize(boundaries_probs)
 
                 # Acrual moment of real mask creation that are further used in
                 # downsampler and upsampler

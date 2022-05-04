@@ -367,7 +367,7 @@ def evaluate(eval_iter, model, args, step):
                 break
 
             if getattr(model, 'boundary_predictor', None) is not None:
-                assert args.bp_switch_step is None or args.bp_switch_step == 0
+                assert args.bp_switch_step is None or args.bp_switch_step < step
                 loss, stats, aux_loss, _ = model(data,
                                                  target,
                                                  boundaries_to_use=None,
@@ -475,7 +475,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
                                                             step=step)
 
     if args.is_bp:
-        assert args.bp_switch_step is None or args.bp_switch_step == 0
+        # assert args.bp_switch_step is None or args.bp_switch_step == 0
         seq_loss, stats, aux_loss, _ = model(data_i,
                                              target_i,
                                              boundaries_to_use=None,
