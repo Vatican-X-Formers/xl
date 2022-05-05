@@ -15,7 +15,7 @@ model: &model
    upsample_mode: 'average'
    activation_function: relu
    gather_stats: ['shortened_length']
-   mask_mode: 'boundary_starts_group'
+   mask_mode: 'boundary_ends_group'
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
@@ -26,8 +26,9 @@ boundaries: &boundaries
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
    spikes_lower_perc: 0 # Used for spikes idea
-   value_perc: 100 # Used for calculating boundaries from data
-   group_threshold: 4
+   value_perc: 70 # Used for calculating boundaries from data
+   group_threshold: 0.0
+   spikes_step: 100
 
 # If I want to add parameters on top of Transformer layers
 # I do this using this group of params that define BP
@@ -42,7 +43,8 @@ tokenizer: &tokenizer
    tokenizer_vocab_size: 5000
 
 eval: &eval
-   eval_interval: 10000
+   eval_interval: 5000
+   eval_max_steps: 200
    eval_tgt_lengths: [512]
    eval_total_lengths: [2048]
    text_generation_interval: 25000
@@ -51,7 +53,7 @@ optim: &optim
    optim: adam
    scheduler: cosine
    lr: 0.00025
-   warmup_step: 0
+   warmup_step: 1000
    clip: 0.25
    weight_decay: 0
    adam_b1: 0.9
@@ -59,13 +61,14 @@ optim: &optim
    adam_eps: 1e-8
 
 train: &train
+   affinity: disabled
    multi_gpu: ddp
    cuda: true
    max_step: 200000
    tgt_len: 2048
    batch_size: 8
    batch_chunk: 2
-   log_interval: 100 
+   log_interval: 100
 
 default:
    train:
