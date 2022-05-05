@@ -427,6 +427,7 @@ class MemTransformerLM(nn.Module):
                  rl_loss_combine='',
                  add_one_emb=False,
                  group_threshold=None,
+                 spikes_step=-1,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -492,6 +493,7 @@ class MemTransformerLM(nn.Module):
                 self.spikes_lower_perc = spikes_lower_perc
                 self.value_perc = value_perc
                 self.group_threshold = group_threshold
+                self.spikes_step = spikes_step
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -603,7 +605,8 @@ class MemTransformerLM(nn.Module):
         total[:-1, :] &= right
         to_add, to_discard = torch.zeros_like(vector), torch.zeros_like(vector)
 
-        for l_idx, r_idx in [(0, 100), (100, 300), (300, 700), (700, 5000)]:
+        for l_idx in range(0, vector.size(0), self.spikes_step):
+            r_idx = l_idx + self.spikes_step
             if l_idx >= vector.size(0):
                 continue
 
@@ -640,14 +643,16 @@ class MemTransformerLM(nn.Module):
         total = torch.zeros_like(vector).bool()
 
         if self.value_perc != 100:
-            for l_idx, r_idx in [(0, 100), (100, 300), (300, 700), (700, 5000)]:
+            for l_idx in range(0, vector.size(0), 100):
+                r_idx = l_idx + 100
+
                 if l_idx >= vector.size(0):
                     continue
 
                 val = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
                                     self.value_perc)
                 val = torch.tensor(val)
-                val = utils.distributed.all_reduce_item(val, op='mean')
+                # val = utils.distributed.all_reduce_item(val, op='mean')
                 total[l_idx:r_idx] |= vector[l_idx:r_idx] > val
 
         return total
