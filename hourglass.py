@@ -643,9 +643,8 @@ class MemTransformerLM(nn.Module):
         total = torch.zeros_like(vector).bool()
 
         if self.value_perc != 100:
-            for l_idx in range(0, vector.size(0), 100):
-                r_idx = l_idx + 100
-
+            for l_idx in range(0, vector.size(0), self.spikes_step):
+                r_idx = l_idx + self.spikes_step
                 if l_idx >= vector.size(0):
                     continue
 
@@ -661,7 +660,8 @@ class MemTransformerLM(nn.Module):
         total = torch.zeros_like(vector).bool()
         vector = torch.cat([torch.zeros((1, vector.size(1)), dtype=vector.dtype, device=vector.device), vector[1:] - vector[:-1]], dim=0)
 
-        for l_idx, r_idx in [(0, 100), (100, 300), (300, 700), (700, 5000)]:
+        for l_idx in range(0, vector.size(0), self.spikes_step):
+            r_idx = l_idx + self.spikes_step
             if l_idx >= vector.size(0):
                 continue
 
