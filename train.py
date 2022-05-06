@@ -111,6 +111,7 @@ def parse_args():
     models_bp.add_argument('--bp_capacity', type=str, default='none')
     models_bp.add_argument('--bp_weight', type=float, default=1.0)
     models_bp.add_argument('--bp_switch_step', type=int, default=None)
+    models_bp.add_argument('--bp_zero_init', action='store_true')
 
     boundaries = parser.add_argument_group('boundary creator')
     boundaries.add_argument('--boundaries_type', type=str, default='vanilla')
@@ -295,6 +296,15 @@ def weights_init(m, args):
             init_weight(m.r_w_bias, args)
         if hasattr(m, 'r_r_bias'):
             init_weight(m.r_r_bias, args)
+
+
+def zero_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Linear') != -1:
+        if hasattr(m, 'weight') and m.weight is not None:
+            nn.init.constant_(m.weight, 0.0)
+        if hasattr(m, 'bias') and m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
 
 
 def get_logits(model, data, boundaries, step=200000):
@@ -770,6 +780,9 @@ def main():
     model = MemTransformerLM(**model_config)
     model.apply(functools.partial(weights_init, args=args))
     model.word_emb.apply(functools.partial(weights_init, args=args))
+    if args.bp_zero_init:
+        print('zero init')
+        model.boundary_predictor.apply(zero_init)
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
     args.is_bp = getattr(model, 'boundary_predictor', None) is not None
 
