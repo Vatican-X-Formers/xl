@@ -665,11 +665,11 @@ class MemTransformerLM(nn.Module):
             if l_idx >= vector.size(0):
                 continue
 
-            val = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
-                                self.value_perc)
-            val = torch.tensor(val)
-            val = utils.distributed.all_reduce_item(val, op='mean')
-            total[l_idx:r_idx] |= vector[l_idx:r_idx] > val
+            vals = torch.zeros(vector.size(1), device=vector.device)
+            for i in range(vector.size(1)):
+                vals[i] = np.percentile(vector[l_idx:r_idx, i].cpu().detach().numpy(),
+                                        self.value_perc)
+            total[l_idx:r_idx] |= vector[l_idx:r_idx] > vals.unsqueeze(0)
 
         return total
 
