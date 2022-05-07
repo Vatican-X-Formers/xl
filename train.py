@@ -224,7 +224,8 @@ def parse_args():
         assert args.boundaries_type == 'tokenizer' or \
             (args.boundaries_type == 'noboundaries' and len(args.bp_target) > 0)
 
-    if args.boundaries_type in ['ids', 'normal', 'space_dist', 'constant']:
+    if args.boundaries_type in ['ids', 'normal', 'space_dist', 'constant',
+                                'random_constant']:
         assert args.bp_mode == 'none'
 
     return args
@@ -389,7 +390,7 @@ def evaluate(eval_iter, model, args, step):
             else:
                 # Also autoregressive tokenisers should be added here, approach 1 and 3
                 assert args.boundaries_type in ['ids', 'normal', 'space_dist',
-                                                'constant', 'noboundaries']
+                                                'constant', 'random_constant', 'noboundaries']
                 loss, stats, aux_loss, _ = model(data,
                                                  target,
                                                  boundaries_to_use=boundaries,
@@ -500,7 +501,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
     else:
         # Also autoregressive tokenisers should be added here, approach 1 and 3
         assert args.boundaries_type in ['ids', 'normal', 'space_dist',
-                                        'constant', 'noboundaries']
+                                        'constant', 'random_constant', 'noboundaries']
         seq_loss, stats, aux_loss, _ = model(data_i,
                                              target_i,
                                              boundaries_to_use=boundaries_i,

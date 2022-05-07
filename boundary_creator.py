@@ -17,7 +17,7 @@ class BoundaryCreator():
 
         if boundaries_type == 'ids':
             assert boundary_ids is not None and len(boundary_ids) > 0
-        elif boundaries_type == 'constant':
+        elif boundaries_type in ['constant', 'random_constant']:
             assert fixed_sf > 0
             self.fixed_sf = fixed_sf
         elif boundaries_type == 'normal':
@@ -137,6 +137,12 @@ class BoundaryCreator():
                 boundaries[:, 1::4] = 1
             else:
                 boundaries[:, ::self.fixed_sf] = 1
+        elif self.boundaries_type == 'random_constant':
+            for i in range(data.size(0)):
+                how_much = data.size(1) // self.fixed_sf
+                indexes = torch.randperm(data.size(1),
+                                         device=data.device)[:how_much]
+                boundaries[i, indexes] = 1
         else:
             raise NotImplementedError
 
