@@ -605,54 +605,52 @@ class MemTransformerLM(nn.Module):
         total[:-1, :] &= right
         to_add, to_discard = torch.zeros_like(vector), torch.zeros_like(vector)
 
-        for l_idx in range(0, vector.size(0), self.spikes_step):
-            r_idx = l_idx + self.spikes_step
-            if l_idx >= vector.size(0):
-                continue
+        if self.spikes_upper_perc < 100 or self.spikes_lower_perc > 0:
+            for l_idx in range(0, vector.size(0), self.spikes_step):
+                r_idx = l_idx + self.spikes_step
+                if l_idx >= vector.size(0):
+                    continue
 
-            values_to_calc_stats = vector[l_idx:r_idx][total[l_idx:r_idx]]
-            values_to_calc_stats = values_to_calc_stats.cpu().detach().numpy()
+                values_to_calc_stats = vector[l_idx:r_idx][total[l_idx:r_idx]]
+                values_to_calc_stats = values_to_calc_stats.cpu().detach().numpy()
 
-            to_add, to_discard = None, None
+                to_add, to_discard = None, None
 
-            # Add large
-            if self.spikes_upper_perc != 100:
-                upper_value = np.percentile(values_to_calc_stats,
-                                            self.spikes_upper_perc)
-                upper_value = torch.tensor(upper_value)
-                upper_value = utils.distributed.all_reduce_item(upper_value, op='mean')
-                to_add = (vector[l_idx:r_idx] >= upper_value) & ~total[l_idx:r_idx]
+                # Add large
+                if self.spikes_upper_perc != 100:
+                    upper_value = torch.zeros(vector.size(1), device=vector.device)
+                    for i in range(vector.size(1)):
+                        upper_value[i] = np.percentile(values_to_calc_stats, self.spikes_upper_perc)
+                    to_add = (vector[l_idx:r_idx] >= upper_value.unsqueeze(0)) & ~total[l_idx:r_idx]
 
-            # Cancel small
-            if self.spikes_lower_perc != 0:
-                lower_value = np.percentile(values_to_calc_stats,
-                                            self.spikes_lower_perc)
-                lower_value = torch.tensor(lower_value)
-                lower_value = utils.distributed.all_reduce_item(lower_value, op='mean')
-                to_discard = (vector[l_idx:r_idx] <= lower_value) & total[l_idx:r_idx]
+                # Cancel small
+                if self.spikes_lower_perc != 0:
+                    lower_value = np.percentile(values_to_calc_stats,
+                                                self.spikes_lower_perc)
+                    to_discard = (vector[l_idx:r_idx] <= lower_value) & total[l_idx:r_idx]
 
-            if to_add is not None:
-                total[l_idx:r_idx] |= to_add
+                if to_add is not None:
+                    total[l_idx:r_idx] |= to_add
 
-            if to_discard is not None:
-                total[l_idx:r_idx] &= ~to_discard
+                if to_discard is not None:
+                    total[l_idx:r_idx] &= ~to_discard
 
         return total
 
     def get_top_perc(self, vector):
         total = torch.zeros_like(vector).bool()
 
-        if self.value_perc != 100:
+        if self.value_perc < 100:
             for l_idx in range(0, vector.size(0), self.spikes_step):
                 r_idx = l_idx + self.spikes_step
                 if l_idx >= vector.size(0):
                     continue
 
-                val = np.percentile(vector[l_idx:r_idx].cpu().detach().numpy(),
-                                    self.value_perc)
-                val = torch.tensor(val)
-                # val = utils.distributed.all_reduce_item(val, op='mean')
-                total[l_idx:r_idx] |= vector[l_idx:r_idx] > val
+                vals = torch.zeros(vector.size(1), device=vector.device)
+                for i in range(vector.size(1)):
+                    vals[i] = np.percentile(vector[l_idx:r_idx, i].cpu().detach().numpy(),
+                                            self.value_perc)
+                total[l_idx:r_idx] |= vector[l_idx:r_idx] > vals.unsqueeze(0)
 
         return total
 
@@ -660,16 +658,17 @@ class MemTransformerLM(nn.Module):
         total = torch.zeros_like(vector).bool()
         vector = torch.cat([torch.zeros((1, vector.size(1)), dtype=vector.dtype, device=vector.device), vector[1:] - vector[:-1]], dim=0)
 
-        for l_idx in range(0, vector.size(0), self.spikes_step):
-            r_idx = l_idx + self.spikes_step
-            if l_idx >= vector.size(0):
-                continue
+        if self.value_perc < 100:
+            for l_idx in range(0, vector.size(0), self.spikes_step):
+                r_idx = l_idx + self.spikes_step
+                if l_idx >= vector.size(0):
+                    continue
 
-            vals = torch.zeros(vector.size(1), device=vector.device)
-            for i in range(vector.size(1)):
-                vals[i] = np.percentile(vector[l_idx:r_idx, i].cpu().detach().numpy(),
-                                        self.value_perc)
-            total[l_idx:r_idx] |= vector[l_idx:r_idx] > vals.unsqueeze(0)
+                vals = torch.zeros(vector.size(1), device=vector.device)
+                for i in range(vector.size(1)):
+                    vals[i] = np.percentile(vector[l_idx:r_idx, i].cpu().detach().numpy(),
+                                            self.value_perc)
+                total[l_idx:r_idx] |= vector[l_idx:r_idx] > vals.unsqueeze(0)
 
         return total
 
@@ -677,8 +676,7 @@ class MemTransformerLM(nn.Module):
         tmp = vector.cumsum(0) / self.group_threshold
         tmp = tmp.int()
         tmp = tmp[1:] > tmp[:-1]
-        tmp = torch.cat([
-            vector[0:1] > self.group_threshold, tmp], dim=0)
+        tmp = torch.cat([vector[0:1] > self.group_threshold, tmp], dim=0)
         tmp = tmp.bool()
 
         return tmp
