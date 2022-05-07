@@ -380,7 +380,7 @@ def evaluate(eval_iter, model, args, step):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
 
-            if getattr(model, 'boundary_predictor', None) is not None:
+            if args.is_bp:
                 assert args.bp_switch_step is None or args.bp_switch_step < step
                 loss, stats, aux_loss, _ = model(data,
                                                  target,
