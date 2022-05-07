@@ -215,7 +215,7 @@ class SPMBoundaries(BoundaryCreator):
         super().__init__(boundaries_type, **kwargs)
         filename = self.get_tokenizer_filename(tokenizer_type,
                                                tokenizer_vocab_size)
-        filepath = os.path.join(tokenizer_save_dir, 'spm', filename)
+        filepath = os.path.join(tokenizer_save_dir, 'spm', kwargs['dataset'], filename)
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
@@ -255,7 +255,7 @@ class SPMBoundaries(BoundaryCreator):
         boundaries = torch.zeros(batch_size, max_len)
 
         for i in range(batch_size):
-            boundaries[i, 0] = 1
+            # boundaries[i, 0] = 1
             boundaries[i, pieces_lengths[i].cumsum(dim=0)[:-1]] = 1
 
         return boundaries

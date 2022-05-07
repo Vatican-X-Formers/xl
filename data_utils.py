@@ -234,6 +234,7 @@ class Corpus(object):
 
     def extend_kwargs_for_bc(self, **kwargs):
         kwargs['boundary_ids'] = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
+        kwargs['dataset'] = self.dataset
         return kwargs
 
     def get_iterator(self, split, **kwargs):
@@ -243,7 +244,6 @@ class Corpus(object):
                 data=self.data[split],
                 boundary_creator=get_boundary_creator(**kwargs),
                 vocab=self.vocab,
-                dataset=self.dataset,
                 **kwargs
             )
         elif self.dataset in ['im32', 'cifar10']:
