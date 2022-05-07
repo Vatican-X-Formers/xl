@@ -272,7 +272,8 @@ class SPMBoundaries(BoundaryCreator):
 
 
 def get_boundary_creator(boundaries_type, **kwargs):
-    if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist', 'constant']:
+    if boundaries_type in ['noboundaries', 'ids', 'normal', 'space_dist',
+                           'constant', 'random_constant']:
         return BoundaryCreator(boundaries_type, **kwargs)
     elif boundaries_type == 'tokenizer':
         if kwargs['tokenizer_type'].startswith('spm'):
