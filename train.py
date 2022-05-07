@@ -136,6 +136,8 @@ def parse_args():
     boundaries.add_argument('--value_perc', type=int, default=100)
     boundaries.add_argument('--group_threshold', type=float, default=None)
     boundaries.add_argument('--spikes_step', type=int, default=None)
+    boundaries.add_argument('--spikes_left', type=int, default=None)
+    boundaries.add_argument('--spikes_right', type=int, default=None)
     boundaries.add_argument('--n_iters', type=int, default=0)
 
     opt = parser.add_argument_group('optimizer setup')
@@ -438,6 +440,8 @@ def gen_model_config(args, vocab):
         'add_one_emb': args.dataset in ['im32', 'cifar10'],
         'group_threshold': args.group_threshold,
         'spikes_step': args.spikes_step,
+        'spikes_left': args.spikes_left,
+        'spikes_right': args.spikes_right,
         }
 
     return model_config
@@ -781,7 +785,7 @@ def main():
     model.apply(functools.partial(weights_init, args=args))
     model.word_emb.apply(functools.partial(weights_init, args=args))
     if args.bp_zero_init:
-        print('zero init')
+        print('zero ini')
         model.boundary_predictor.apply(zero_init)
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
     args.is_bp = getattr(model, 'boundary_predictor', None) is not None

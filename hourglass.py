@@ -428,6 +428,7 @@ class MemTransformerLM(nn.Module):
                  add_one_emb=False,
                  group_threshold=None,
                  spikes_step=-1,
+                 spikes_left=0, spikes_right=0,
                  ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -494,6 +495,8 @@ class MemTransformerLM(nn.Module):
                 self.value_perc = value_perc
                 self.group_threshold = group_threshold
                 self.spikes_step = spikes_step
+                self.spikes_left = spikes_left
+                self.spikes_right = spikes_right
 
         self.final_cast = nn.Linear(d_model, n_token)
         self.crit = torch.nn.CrossEntropyLoss(reduction='none')
@@ -596,16 +599,20 @@ class MemTransformerLM(nn.Module):
         return downsampling_mask, upsample_mask, size_of_groups.long().squeeze(1)
 
     def get_spikes(self, vector):
-        right = (vector[:-1, :] > vector[1:, :])
-        left = (vector[1:, :] > vector[:-1, :])
-        total = torch.cat([torch.ones((1, left.size(1)),
-                                      device=left.device, dtype=left.dtype
-                                      ), left])
-        # total are better then their left
-        total[:-1, :] &= right
+        total = torch.ones_like(vector).bool()
+
+        for i in range(1, self.spikes_left + 1, 1):
+            mask = vector[i:] > vector[:-i]
+            total[i:] &= mask
+
+        for i in range(1, self.spikes_right + 1, 1):
+            mask = vector[:-i] > vector[i:]
+            total[:-i] &= mask
+
         to_add, to_discard = torch.zeros_like(vector), torch.zeros_like(vector)
 
         if self.spikes_upper_perc < 100 or self.spikes_lower_perc > 0:
+            raise NotImplementedError
             for l_idx in range(0, vector.size(0), self.spikes_step):
                 r_idx = l_idx + self.spikes_step
                 if l_idx >= vector.size(0):
