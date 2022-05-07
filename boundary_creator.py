@@ -132,7 +132,11 @@ class BoundaryCreator():
             group_sizes += 2  # This is the shift of the distribution
             boundaries = self.boundaries_from_group_sizes(boundaries, group_sizes)
         elif self.boundaries_type == 'constant':
-            boundaries[:, ::self.fixed_sf] = 1
+            if self.fixed_sf == 1.5:
+                boundaries[:, ::2] = 1
+                boundaries[:, 1::4] = 1
+            else:
+                boundaries[:, ::self.fixed_sf] = 1
         else:
             raise NotImplementedError
 
