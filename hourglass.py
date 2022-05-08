@@ -718,6 +718,7 @@ class MemTransformerLM(nn.Module):
             layers = self.layers[i]
 
             if isinstance(layers, Upsampler):
+                continue
                 # The residual come from just before shortening
                 hidden = layers(x=hidden,
                                 residual=residual,
@@ -729,13 +730,14 @@ class MemTransformerLM(nn.Module):
                     if boundaries_to_use is None:
                         assert boundaries_to_predict is not None or len(self.bp_target) > 0
                         if step < self.bp_switch_step:
-                            boundaries_to_use = torch.zeros_like(data).bool()
+                            boundaries_to_use = torch.ones_like(data).bool()
                         else:
                             # If there are no other boundaries to use I need to
                             # create one with my boundary predictor by discretizing
                             # probs matrix
                             boundaries_to_use = self.boundary_predictor.discretize(boundaries_probs)
 
+                continue
                 # Acrual moment of real mask creation that are further used in
                 # downsampler and upsampler
                 downsampling_mask, upsampling_mask, size_of_groups = self.create_masks(boundaries_to_use)

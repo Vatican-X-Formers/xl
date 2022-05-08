@@ -24,7 +24,6 @@ from utils.exp_utils import create_exp_dir
 import torch.nn.functional as F
 import pdb
 from utils.exp_utils import l2_promote
-run = None
 np.set_printoptions(suppress=True)
 
 
@@ -381,7 +380,7 @@ def evaluate(eval_iter, model, args, step):
                 break
 
             if args.is_bp:
-                assert args.bp_switch_step is None or args.bp_switch_step < step
+                # assert args.bp_switch_step is None or args.bp_switch_step < step
                 loss, stats, aux_loss, _ = model(data,
                                                  target,
                                                  boundaries_to_use=None,
@@ -398,6 +397,7 @@ def evaluate(eval_iter, model, args, step):
                                                  step=step)
 
             loss = loss.float().mean().type_as(loss)
+            print(i, loss)
 
             total_loss += seq_len * loss.item()
             total_len += seq_len
@@ -518,7 +518,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
 def train(tr_iter, va_iters, model, model_config, optimizer,
           scheduler, vocab, epoch, last_iter, train_step,
-          timeout_handler, args):
+          timeout_handler, args, run):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -543,7 +543,22 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
     log_start_time = time.time()
     train_iter = tr_iter.get_fixlen_iter(start=last_iter, shuffle=args.shuffle)
 
+    if train_step == 0:
+        for name, param in model.named_parameters():
+            if not (name.startswith('boundary_predictor') or
+                    name.startswith('module.boundary_predictor')):
+                print(name)
+                param.requires_grad = False
+
     for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
+        if train_step == 500:
+            for name, param in model.named_parameters():
+                if not (name.startswith('boundary_predictor') or
+                        name.startswith('module.boundary_predictor')):
+                    print(name)
+                    param.requires_grad = True
+            print('done')
+
         data = data.to(tr_iter.device, non_blocking=True)
         target = target.to(tr_iter.device, non_blocking=True)
         if boundaries is not None:
@@ -581,8 +596,8 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
         for k, v in stats.items():
             stats_agg[k].append(v)
 
-        stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
-        stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+        # stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+        # stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
 
         # if run and train_step % args.text_generation_interval == 0:
         #     generated_sample =sample_generation(vocab, model, args)
@@ -823,13 +838,14 @@ def main():
     # Log training and model args
     if rank == 0:
         # Neptune
-        global run
         run = neptune.init('syzymon/hourglass-pytorch')
         run['model_config'] = model_config
         run['args'] = vars(args)
         run['branch'] = os.getenv('TRAX_BRANCH')
         run['exp_path'] = os.getenv('EXPERIMENT_PATH')
         run['slurm_jobid'] = os.getenv('SLURM_JOB_ID')
+    else:
+        run = None
 
     if rank == 0:
         print(model)
@@ -855,7 +871,8 @@ def main():
                     last_iter=0,
                     train_step=train_step,
                     timeout_handler=timeout_handler,
-                    args=args
+                    args=args,
+                    run=run
                     )
 
                 if train_step == args.max_step:
