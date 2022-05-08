@@ -1,4 +1,5 @@
 docker run --gpus all -it --rm --ipc=host \
     -v /pio/scratch/1/pn/hourglass:/workspace/hourglass \
-    -v /pio/scratch/1/pn/checkpoints:/workspace/checkpoints \
+    -v /pio/scratch/1/pn/data:/pio/scratch/1/pn/data \
+    -v /pio/scratch/1/pn/experiments:/workspace/hourglass/exp \
     transformer-xl bash

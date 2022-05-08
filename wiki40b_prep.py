@@ -42,31 +42,39 @@ mapping = {}
 base_path = 'data/wiki40b/'
 threshold = 5
 
-# for language in ['fi', 'de']:
+is_raw = True
+
 for language in ['fi']:
     for split in ['train', 'validation', 'test']:
-    # for split in ['test']:
         dataset = load_dataset('wiki40b', language, split=split, beam_runner='DirectRunner')
 
-        # Concat articles
-        text = ' '.join(dataset['text'])
+        if is_raw:
+            text = '\n'.join(dataset['text'])
+        else:
+            # Concat articles
+            text = ' '.join(dataset['text'])
 
-        for sp in specials:
-            assert sp not in text
-        assert unk not in text
+            for sp in specials:
+                assert sp not in text
+            assert unk not in text
 
-        for marker, special in zip(markers, specials):
-            text = text.replace(marker, f' {special} ')
+            for marker, special in zip(markers, specials):
+                text = text.replace(marker, f' {special} ')
 
-        text = lowercase(text)
-        text = collapse_whitespace(text)
-        text = text.strip()
+            text = lowercase(text)
+            text = collapse_whitespace(text)
+            text = text.strip()
 
-        if split == 'train':
-            counter = Counter(text)
-            allowed_chars = [k for k, v in counter.items() if v > threshold]
+            if split == 'train':
+                counter = Counter(text)
+                allowed_chars = [k for k, v in counter.items() if v > threshold]
 
-        text = ''.join([c if c in allowed_chars else unk for c in text])
+            text = ''.join([c if c in allowed_chars else unk for c in text])
 
-        with open(f'{base_path}/{language}/{split}.txt', 'w+') as file:
+        if is_raw:
+            filename = f'{base_path}/{language}/{split}.raw.txt'
+        else:
+            filename = f'{base_path}/{language}/{split}.txt'
+
+        with open(filename, 'w+') as file:
             file.write(text)
