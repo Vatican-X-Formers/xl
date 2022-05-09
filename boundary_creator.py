@@ -312,6 +312,8 @@ class MFBoundaries(BoundaryCreator):
             segmentation = self.tokenizer.viterbi_segment(word)[0]
             words_segmentation[word] = [len(x) for x in segmentation]
 
+        words_segmentation[''] = [0]
+
         sample_lengths = []
 
         for i in range(batch_size):
@@ -321,7 +323,8 @@ class MFBoundaries(BoundaryCreator):
             sample_lengths.append(torch.tensor(pieces_lengths))
 
         total_lengths = [x.sum().item() for x in sample_lengths]
-        assert len(set(total_lengths)) == 1 and total_lengths[0] == len(data[0])
+        assert len(set(total_lengths)) == 1
+        assert total_lengths[0] == len(data[0])
         boundaries = torch.zeros(batch_size, total_lengths[0])
 
         for i in range(batch_size):
