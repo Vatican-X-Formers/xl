@@ -13,3 +13,5 @@ ENV NEPTUNE_PROJECT syzymon/trax
 ENV NEPTUNE_TOKEN eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJlMTcxMzI2My1jOTY1LTQ5MjAtOGMzNC1jNmNhMzRlOGI3MGUifQ==
 RUN pip install neptune-client
 RUN pip install tokenizers 
+RUN pip install pdbpp 
+RUN pip install morfessor 
