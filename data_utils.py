@@ -16,6 +16,7 @@ import os
 import torch
 import imageio as iio
 import pdb
+import random
 from torch.utils.data import DataLoader, Dataset
 import utils
 from utils.vocabulary import Vocab
@@ -66,14 +67,13 @@ class LMOrderedIterator(object):
         self.device = kwargs['device']
 
     def roll(self, seed):
-        raise NotImplementedError
-        # rng = torch.Generator()
-        # rng.manual_seed(seed)
-        # for i in range(self.data.size(1)):
-        #     row = self.data[:, i]
-        #     shift = torch.randint(0, self.data_len, (1,), generator=rng)
-        #     row = torch.cat((row[shift:], row[:shift]))
-        #     self.data[:, i] = row
+        rng = torch.Generator()
+        rng.manual_seed(seed)
+        for i in range(len(self.data)):
+            row = self.data[i]
+            shift = torch.randint(0, self.data_len, (1,), generator=rng)
+            row = row[shift:] + row[:shift]
+            self.data[i] = row
 
     def get_batch(self, i):
         i = i[0]
@@ -101,8 +101,13 @@ class LMOrderedIterator(object):
 
         return data, target, seq_len, boundaries
 
-    def get_fixlen_iter(self, start=0, shuffle=False):
+    def get_fixlen_iter(self, start=0, shuffle=False, seed=None):
         dataset = [i for i in range(start, self.data_len - 1, self.tgt_len)]
+
+        if shuffle:
+            assert seed is not None
+            random.seed(seed)
+            random.shuffle(dataset)
 
         return DataLoader(
             dataset,
