@@ -222,7 +222,7 @@ class Corpus(object):
 
             for split in ['test']:
                 self.data[split] = self.data['valid']
-        elif dataset == 'wiki40b_fi':
+        elif dataset.startswith('wiki40b'):
             self.vocab = Vocab(*args, **kwargs)
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
@@ -243,7 +243,7 @@ class Corpus(object):
         return kwargs
 
     def get_iterator(self, split, **kwargs):
-        if self.dataset in ['text8', 'wiki40b_fi']:
+        if self.dataset in ['text8'] or self.dataset.startswith('wiki40b'):
             kwargs = self.extend_kwargs_for_bc(**kwargs)
             return LMOrderedIterator(
                 data=self.data[split],
