@@ -495,6 +495,7 @@ class MemTransformerLM(nn.Module):
                     capacity=bp_capacity,
                     d_model=d_model,
                     weight=bp_weight,
+                    dropout=dropout,
                     activation_function=activation_function
                 )
                 self.bp_switch_step = bp_switch_step
