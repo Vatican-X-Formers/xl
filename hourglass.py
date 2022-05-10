@@ -335,7 +335,8 @@ class Downsampler(nn.Module):
 
 class BoundaryPredictor(nn.Module):
     def __init__(self, mode, capacity, d_model, weight, d_inner=2048,
-                 dropout=0.0, threshold=0.5, max_len=1237):
+                 dropout=0.0, threshold=0.5, max_len=1237,
+                 activation_function='relu'):
         super().__init__()
         self.mode = mode
         self.threshold = threshold
@@ -345,9 +346,14 @@ class BoundaryPredictor(nn.Module):
         if capacity == 'linear':
             self.boundary_predictor = nn.Linear(d_model, 1)
         elif capacity == 'nonlinear':
+            if activation_function == 'relu':
+                activation_fn = nn.ReLU(inplace=True)
+            elif activation_function == 'gelu':
+                activation_fn = torch.nn.GELU()
+
             self.boundary_predictor = nn.Sequential(
                 nn.Linear(d_model, d_inner),
-                nn.ReLU(inplace=True),
+                activation_fn,
                 nn.Dropout(dropout),
                 nn.Linear(d_inner, 1),
             )
@@ -484,10 +490,13 @@ class MemTransformerLM(nn.Module):
 
             # Boundary predictor
             if bp_mode != 'none':
-                self.boundary_predictor = BoundaryPredictor(mode=bp_mode,
-                                                            capacity=bp_capacity,
-                                                            d_model=d_model,
-                                                            weight=bp_weight)
+                self.boundary_predictor = BoundaryPredictor(
+                    mode=bp_mode,
+                    capacity=bp_capacity,
+                    d_model=d_model,
+                    weight=bp_weight,
+                    activation_function=activation_function
+                )
                 self.bp_switch_step = bp_switch_step
                 self.bp_target = bp_target
                 self.spikes_upper_perc = spikes_upper_perc
