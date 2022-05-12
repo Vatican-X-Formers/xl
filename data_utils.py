@@ -74,15 +74,18 @@ class LMOrderedIterator(object):
 
         for i in range(self.data.size(1)):
             row = self.data[:, i]
-            b_row = self.boundaries[:, i]
+            if self.boundaries is not None:
+                b_row = self.boundaries[:, i]
 
             shift = torch.randint(0, self.data_len, (1,), generator=rng)
 
             row = torch.cat((row[shift:], row[:shift]))
-            b_row = torch.cat((b_row[shift:], b_row[:shift]))
+            if self.boundaries is not None:
+                b_row = torch.cat((b_row[shift:], b_row[:shift]))
 
             self.data[:, i] = row
-            self.boundaries[:, i] = b_row
+            if self.boundaries is not None:
+                self.boundaries[:, i] = b_row
 
     def get_batch(self, i):
         i = i[0]
