@@ -176,12 +176,14 @@ def parse_args():
     training.add_argument('--roll', action='store_true',
                           help='Enable random shifts within each data stream')
     training.add_argument('--shuffle', action='store_true')
+    training.add_argument('--fp16', action='store_true')
     training.add_argument('--tgt_len', type=int, default=192,
                           help='Number of tokens to predict')
     training.add_argument('--ext_len', type=int, default=0,
                           help='Length of the extended context')
     training.add_argument('--seed', type=int, default=1111,
                           help='Random seed')
+    training.add_argument('--nw', type=int, default=0)
     training.add_argument('--multi_gpu', default=None, type=str,
                           choices=['ddp'],
                           help='Use multiple GPU')
@@ -382,22 +384,24 @@ def evaluate(eval_iter, model, args, step):
 
             if args.is_bp:
                 assert args.bp_switch_step is None or args.bp_switch_step < step
-                loss, stats, aux_loss, _ = model(data,
-                                                 target,
-                                                 boundaries_to_use=None,
-                                                 boundaries_to_predict=boundaries,
-                                                 step=step)
+                with torch.cuda.amp.autocast(args.fp16):
+                    loss, stats, aux_loss, _ = model(data,
+                                                     target,
+                                                     boundaries_to_use=None,
+                                                     boundaries_to_predict=boundaries,
+                                                     step=step)
+                    loss = loss.float().mean().type_as(loss)
             else:
                 # Also autoregressive tokenisers should be added here, approach 1 and 3
                 assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                                 'constant', 'random_constant', 'noboundaries']
-                loss, stats, aux_loss, _ = model(data,
-                                                 target,
-                                                 boundaries_to_use=boundaries,
-                                                 boundaries_to_predict=None,
-                                                 step=step)
-
-            loss = loss.float().mean().type_as(loss)
+                with torch.cuda.amp.autocast(args.fp16):
+                    loss, stats, aux_loss, _ = model(data,
+                                                     target,
+                                                     boundaries_to_use=boundaries,
+                                                     boundaries_to_predict=None,
+                                                     step=step)
+                    loss = loss.float().mean().type_as(loss)
 
             total_loss += seq_len * loss.item()
             total_len += seq_len
@@ -471,7 +475,7 @@ def get_boundary_config(args):
 
 
 def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
-                    args, step):
+                    args, step, scaler):
     data_i = data_chunks[i].contiguous()
     target_i = target_chunks[i].contiguous()
 
@@ -493,25 +497,31 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
     if args.is_bp:
         # assert args.bp_switch_step is None or args.bp_switch_step == 0
-        seq_loss, stats, aux_loss, _ = model(data_i,
-                                             target_i,
-                                             boundaries_to_use=None,
-                                             boundaries_to_predict=boundaries_i,
-                                             step=step)
+        with torch.cuda.amp.autocast(args.fp16):
+            seq_loss, stats, aux_loss, _ = model(data_i,
+                                                 target_i,
+                                                 boundaries_to_use=None,
+                                                 boundaries_to_predict=boundaries_i,
+                                                 step=step)
+            seq_loss = seq_loss.float().mean().type_as(seq_loss)
+            total_loss = (seq_loss + aux_loss) / args.batch_chunk
     else:
         # Also autoregressive tokenisers should be added here, approach 1 and 3
         assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                         'constant', 'random_constant', 'noboundaries']
-        seq_loss, stats, aux_loss, _ = model(data_i,
-                                             target_i,
-                                             boundaries_to_use=boundaries_i,
-                                             boundaries_to_predict=None,
-                                             step=step)
+        with torch.cuda.amp.autocast(args.fp16):
+            seq_loss, stats, aux_loss, _ = model(data_i,
+                                                 target_i,
+                                                 boundaries_to_use=boundaries_i,
+                                                 boundaries_to_predict=None,
+                                                 step=step)
+            seq_loss = seq_loss.float().mean().type_as(seq_loss)
+            total_loss = (seq_loss + aux_loss) / args.batch_chunk
 
-    seq_loss = seq_loss.float().mean().type_as(seq_loss)
-    total_loss = (seq_loss + aux_loss) / args.batch_chunk
-
-    total_loss.backward()
+    if args.fp16:
+        scaler.scale(total_loss).backward()
+    else:
+        total_loss.backward()
 
     return seq_loss.item() / args.batch_chunk, stats
 
@@ -542,7 +552,7 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
 
     log_start_time = time.time()
     train_iter = tr_iter.get_fixlen_iter(start=last_iter, shuffle=args.shuffle,
-                                         seed=args.seed + epoch)
+                                         seed=args.seed + epoch, nw=args.nw)
 
     for batch, (data, target, seq_len, boundaries) in enumerate(train_iter, start=1):
         data = data.to(tr_iter.device, non_blocking=True)

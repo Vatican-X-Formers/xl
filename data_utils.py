@@ -87,7 +87,7 @@ class LMOrderedIterator(object):
 
         return data, target, seq_len, boundaries
 
-    def get_fixlen_iter(self, start=0, shuffle=False, seed=None):
+    def get_fixlen_iter(self, start=0, shuffle=False, seed=None, nw=0):
         dataset = [i for i in range(start, self.data_len - 1, self.tgt_len)]
 
         if shuffle:
@@ -101,7 +101,7 @@ class LMOrderedIterator(object):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=0
+            num_workers=nw
         )
 
 
