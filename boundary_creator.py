@@ -226,9 +226,7 @@ class SPMBoundaries(BoundaryCreator):
         filename = self.get_tokenizer_filename(tokenizer_type,
                                                tokenizer_vocab_size)
         filepath = os.path.join(tokenizer_save_dir, 'spm', kwargs['dataset'], filename)
-        filepath = 'spmunigram-5000.model'
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
-        print(filepath)
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
         assert tokenizer_type.startswith('spm')
@@ -281,10 +279,7 @@ class SPMBoundaries(BoundaryCreator):
                 segmentation[0] = segmentation[0][1:]
 
             words_segmentation[word] = [len(x) for x in segmentation]
-            try:
-                assert len(word) == sum(words_segmentation[word])
-            except AssertionError:
-                pdb.set_trace()
+            assert len(word) == sum(words_segmentation[word])
 
         sample_lengths = []
 
