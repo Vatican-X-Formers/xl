@@ -226,16 +226,24 @@ class SPMBoundaries(BoundaryCreator):
         filename = self.get_tokenizer_filename(tokenizer_type,
                                                tokenizer_vocab_size)
         filepath = os.path.join(tokenizer_save_dir, 'spm', kwargs['dataset'], filename)
+        filepath = 'spmunigram-5000.model'
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
+        print(filepath)
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
         assert tokenizer_type.startswith('spm')
         filename = f'{tokenizer_type}-{vocab_size}.model'
         return filename
 
-    def get_boundaries(self, txt=None, tensor=None, add_symbols=False, top_n=1):
+    def get_boundaries(self, txt=None, tensor=None):
         """
             Function that generates boundaries for given tensor of data
+            In Unigram the boundary was always at the space position
+            Also here I'm getting the segmentation, so I want to care that the
+            model I use later either boundary starts or ends group is
+            consistent with segmentation I extract here.
+
+            # This segmentation has to be combined with boundary ends group
 
             Attributes:
                 data - (torch.LongTensor) - [seq_len x batch_size]
@@ -245,28 +253,54 @@ class SPMBoundaries(BoundaryCreator):
         """
         assert txt is not None
         data = txt
-        encoded_texts = self.tokenizer.encode(data, out_type=str)
 
+        words_set = set()
         batch_size = len(data)
-        pieces_lengths = []
 
         for i in range(batch_size):
-            # Hacks to correct behaviour of external tokenizers
-            if data[i][0] != ' ':
-                assert encoded_texts[i][0].startswith('▁')
-                encoded_texts[i][0] = encoded_texts[i][0][1:]
-            if data[i][-1] == ' ':
-                encoded_texts[i].append('▁')
+            words_set.update(data[i].split(' '))
 
-            pieces_lengths.append(torch.tensor([len(x) for x in encoded_texts[i]]))
+        words_list = list(words_set)
 
-        lengths = [x.sum() for x in pieces_lengths]
-        max_len = max(lengths)
-        boundaries = torch.zeros(batch_size, max_len)
+        words_segmentation = {}
+
+        for word, segmentation in zip(words_list,
+                                      self.tokenizer.encode(words_list,
+                                                            out_type=str)):
+            if word == '':
+                words_segmentation[''] = [0]
+                continue
+            else:
+                assert len(segmentation)
+                assert len(segmentation[0])
+                assert segmentation[0].startswith('▁')
+
+            if segmentation[0] == '▁':
+                segmentation = segmentation[1:]
+            else:
+                segmentation[0] = segmentation[0][1:]
+
+            words_segmentation[word] = [len(x) for x in segmentation]
+            try:
+                assert len(word) == sum(words_segmentation[word])
+            except AssertionError:
+                pdb.set_trace()
+
+        sample_lengths = []
 
         for i in range(batch_size):
-            # boundaries[i, 0] = 1
-            boundaries[i, pieces_lengths[i].cumsum(dim=0)[:-1]] = 1
+            words_lengths = [words_segmentation[word] for word in data[i].split(' ')]
+            pieces_lengths = [((y + 1) if (i > 0 and j == (len(sublengths) - 1)) else y) for i, sublengths in enumerate(words_lengths) for j, y
+                              in enumerate(sublengths)]
+            sample_lengths.append(torch.tensor(pieces_lengths))
+
+        total_lengths = [x.sum().item() for x in sample_lengths]
+        assert len(set(total_lengths)) == 1
+        assert total_lengths[0] == len(data[0])
+        boundaries = torch.zeros(batch_size, total_lengths[0])
+
+        for i in range(batch_size):
+            boundaries[i, sample_lengths[i].cumsum(dim=0)[:-1]] = 1
 
         return boundaries
 

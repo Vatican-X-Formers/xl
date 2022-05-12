@@ -15,6 +15,8 @@ x = spm.SentencePieceTrainer.train(input=f'{prefix}',
                                    character_coverage=1.0,
                                    max_sentence_length=int(1e9),
                                    split_by_whitespace=True,
+                                   split_by_unicode_script=False,
+                                   normalization_rule_name='identity',
                                    add_dummy_prefix=True,
                                    remove_extra_whitespaces=True,
                                   )

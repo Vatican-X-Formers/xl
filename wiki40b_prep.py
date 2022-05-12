@@ -3,6 +3,7 @@ from collections import Counter
 import unidecode
 import pdb
 import re
+import os
 
 
 """
@@ -25,7 +26,6 @@ unk = '\u008E'
 def transliteration_cleaners(text):
     '''Pipeline for non-English text that transliterates to ASCII.'''
     # text = unidecode.unidecode(text)
-    text = only_whitelist(text)
     return text.strip()
 
 
@@ -42,9 +42,9 @@ mapping = {}
 base_path = 'data/wiki40b/'
 threshold = 5
 
-is_raw = True
+is_raw = False
 
-for language in ['fi']:
+for language in ['tr']:
     for split in ['train', 'validation', 'test']:
         dataset = load_dataset('wiki40b', language, split=split, beam_runner='DirectRunner')
 
@@ -65,16 +65,26 @@ for language in ['fi']:
             text = collapse_whitespace(text)
             text = text.strip()
 
+            print('a')
+
             if split == 'train':
                 counter = Counter(text)
                 allowed_chars = [k for k, v in counter.items() if v > threshold]
 
+            print('b')
+
             text = ''.join([c if c in allowed_chars else unk for c in text])
 
+            print('c')
+
+        os.makedirs(os.path.dirname(base_path), exist_ok=True)
+
         if is_raw:
-            filename = f'{base_path}/{language}/{split}.raw.txt'
+            filename = f'{base_path}{language}/{split}.raw.txt'
         else:
-            filename = f'{base_path}/{language}/{split}.txt'
+            filename = f'{base_path}{language}/{split}.txt'
+
+        print(filename)
 
         with open(filename, 'w+') as file:
             file.write(text)

@@ -50,14 +50,12 @@ class LMOrderedIterator(object):
         data = [data[i:i + first_leap] for i in range(0, len(data), first_leap)]
         data = data[rank]
         data = [data[i:i + n_step] for i in range(0, len(data), n_step)]
-        self.data = data
+        self.txt = data
+        self.data = torch.cat([self.vocab.convert_to_tensor(self.txt[j]).unsqueeze(-1)
+                               for j in range(len(self.txt))], dim=1)
 
-        assert boundary_creator is not None
         self.boundary_creator = boundary_creator
-        self.boundaries = None
-        if boundary_creator.boundaries_type in ['space_dist', 'normal']:
-            print('Special case, for random boundaries we want to sample them once')
-            self.boundaries = boundary_creator.get_boundaries(self.data).transpose(0, 1)
+        self.boundaries = boundary_creator.get_boundaries(txt=self.txt).bool().transpose(0, 1).contiguous()
 
         # Number of mini-batches
         self.data_len = len(data[0])
@@ -78,26 +76,14 @@ class LMOrderedIterator(object):
     def get_batch(self, i):
         i = i[0]
         seq_len = min(self.tgt_len, self.data_len - 1 - i)
-        batch_size = len(self.data)
 
         end_idx = i + seq_len
         beg_idx = max(0, i - self.ext_len)
 
-        current_batch = [self.data[j][beg_idx:end_idx + 1] for j in range(len(self.data))]
-
-        # Backwards compatibility :/
-        if self.dataset == 'text8':
-            data = [self.vocab.convert_to_tensor(current_batch[j].replace(' ', '_')).unsqueeze(1) for j in range(batch_size)]
-        elif self.dataset.startswith('wiki40b'):
-            data = [self.vocab.convert_to_tensor(current_batch[j]).unsqueeze(1) for j in range(batch_size)]
-
-        data = torch.cat(data, dim=1).long().contiguous()
+        data = self.data[beg_idx:end_idx + 1]
         target = data[-seq_len:]
-        boundaries = self.boundary_creator.get_boundaries(txt=current_batch,
-                                                          tensor=data)
-        if boundaries is not None:
-            boundaries = boundaries.t().bool().contiguous()[:-1, :]
-        data = data[:-1, :]
+        data = data[:-1]
+        boundaries = self.boundaries[beg_idx:end_idx]
 
         return data, target, seq_len, boundaries
 
@@ -115,7 +101,7 @@ class LMOrderedIterator(object):
             shuffle=False,
             pin_memory=True,
             collate_fn=self.get_batch,
-            num_workers=4
+            num_workers=0
         )
 
 
@@ -224,7 +210,7 @@ class Corpus(object):
                 self.data[split] = self.data['valid']
         elif dataset.startswith('wiki40b'):
             self.vocab = Vocab(*args, **kwargs)
-            for split in ['train', 'valid', 'test']:
+            for split in ['valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
                 sents = []
                 with open(dataset_path, 'r', encoding='utf-8') as f:
@@ -234,6 +220,7 @@ class Corpus(object):
                 sent = sents[0]
                 self.vocab.counter.update(sent)
                 self.data[split] = sent
+            self.data['train'] = self.data['valid']
 
             self.vocab.build_vocab()
 
