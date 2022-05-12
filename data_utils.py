@@ -92,7 +92,9 @@ class LMOrderedIterator(object):
         data = self.data[beg_idx:end_idx + 1]
         target = data[-seq_len:]
         data = data[:-1]
-        boundaries = self.boundaries[beg_idx:end_idx]
+
+        if self.boundaries is not None:
+            boundaries = self.boundaries[beg_idx:end_idx]
 
         return data, target, seq_len, boundaries
 
