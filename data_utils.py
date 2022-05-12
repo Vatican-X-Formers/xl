@@ -57,7 +57,9 @@ class LMOrderedIterator(object):
 
         self.boundary_creator = boundary_creator
         self.boundaries = boundary_creator.get_boundaries(txt=self.txt,
-                                                          tensor=self.data).bool().transpose(0, 1).contiguous()
+                                                          tensor=self.data)
+        if self.boundaries is not None:
+            self.boundaries = self.boundaries.bool().transpose(0, 1).contiguous()
 
         # Number of mini-batches
         self.data_len = self.data.size(0)
