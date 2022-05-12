@@ -210,7 +210,7 @@ class Corpus(object):
                 self.data[split] = self.data['valid']
         elif dataset.startswith('wiki40b'):
             self.vocab = Vocab(*args, **kwargs)
-            for split in ['valid', 'test']:
+            for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
                 sents = []
                 with open(dataset_path, 'r', encoding='utf-8') as f:
@@ -220,7 +220,6 @@ class Corpus(object):
                 sent = sents[0]
                 self.vocab.counter.update(sent)
                 self.data[split] = sent
-            self.data['train'] = self.data['valid']
 
             self.vocab.build_vocab()
 
