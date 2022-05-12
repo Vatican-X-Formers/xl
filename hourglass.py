@@ -78,9 +78,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        self.q_net = nn.Linear(d_model, n_head * d_head)
-        self.k_net = nn.Linear(d_model, n_head * d_head)
-        self.v_net = nn.Linear(d_model, n_head * d_head)
+        self.qkv_net = nn.Linear(self.d_model, 3 * n_head * d_head)
         self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head)
 
         self.drop = nn.Dropout(dropout)
@@ -112,18 +110,18 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         if self.pre_lnorm:
-            w_head_q, w_head_k, w_head_v = \
-                map(lambda layer: layer(self.layer_norm(w)), [self.q_net, self.k_net, self.v_net])
+            w_head_q, w_head_k, w_head_v = self.qkv_net(self.layer_norm(w))
         else:
-            w_head_q, w_head_k, w_head_v = \
-                map(lambda layer: layer(w), [self.q_net, self.k_net, self.v_net])
+            w_heads = self.qkv_net(w)
+
         r_head_k = self.r_net(r)
+        w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
         klen = w_head_k.size(0)
 
-        w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)  # qlen x bsz x n_head x d_head
-        w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)  # klen x bsz x n_head x d_head
-        w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)  # klen x bsz x n_head x d_head
+        w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
+        w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
+        w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
 
         r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)       # qlen x n_head x d_head
 
