@@ -101,7 +101,7 @@ class LMOrderedIterator(object):
             dataset,
             batch_size=1,
             shuffle=False,
-            pin_memory=True,
+            pin_memory=False,
             collate_fn=self.get_batch,
             num_workers=nw
         )
