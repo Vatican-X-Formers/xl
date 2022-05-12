@@ -50,15 +50,17 @@ class LMOrderedIterator(object):
         data = [data[i:i + first_leap] for i in range(0, len(data), first_leap)]
         data = data[rank]
         data = [data[i:i + n_step] for i in range(0, len(data), n_step)]
+
         self.txt = data
         self.data = torch.cat([self.vocab.convert_to_tensor(self.txt[j]).unsqueeze(-1)
                                for j in range(len(self.txt))], dim=1)
 
         self.boundary_creator = boundary_creator
-        self.boundaries = boundary_creator.get_boundaries(txt=self.txt).bool().transpose(0, 1).contiguous()
+        self.boundaries = boundary_creator.get_boundaries(txt=self.txt,
+                                                          tensor=self.data).bool().transpose(0, 1).contiguous()
 
         # Number of mini-batches
-        self.data_len = len(data[0])
+        self.data_len = self.data.size(0)
         self.n_batch = (self.data_len + self.tgt_len - 1) // self.tgt_len
 
         self.last_iter = None
@@ -67,11 +69,18 @@ class LMOrderedIterator(object):
     def roll(self, seed):
         rng = torch.Generator()
         rng.manual_seed(seed)
-        for i in range(len(self.data)):
+
+        for i in range(self.data.size(1)):
             row = self.data[:, i]
+            b_row = self.boundaries[:, i]
+
             shift = torch.randint(0, self.data_len, (1,), generator=rng)
+
             row = torch.cat((row[shift:], row[:shift]))
+            b_row = torch.cat((b_row[shift:], b_row[:shift]))
+
             self.data[:, i] = row
+            self.boundaries[:, i] = b_row
 
     def get_batch(self, i):
         i = i[0]
