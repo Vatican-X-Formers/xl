@@ -68,10 +68,10 @@ class LMOrderedIterator(object):
         rng = torch.Generator()
         rng.manual_seed(seed)
         for i in range(len(self.data)):
-            row = self.data[i]
+            row = self.data[:, i]
             shift = torch.randint(0, self.data_len, (1,), generator=rng)
-            row = row[shift:] + row[:shift]
-            self.data[i] = row
+            row = torch.cat((row[shift:], row[:shift]))
+            self.data[:, i] = row
 
     def get_batch(self, i):
         i = i[0]
