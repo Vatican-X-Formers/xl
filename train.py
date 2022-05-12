@@ -592,16 +592,23 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
         for k, v in stats.items():
             stats_agg[k].append(v)
 
-        stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
-        stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
-
         # if run and train_step % args.text_generation_interval == 0:
         #     generated_sample =sample_generation(vocab, model, args)
         #     run['gen/text'].log(generated_sample)
         # Finish of custom statistics
 
+        if args.fp16:
+            scaler.unscale_(optimizer)
+
+        stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+        stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-        optimizer.step()
+        if args.fp16:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
 
         # step-wise learning rate annealing
         train_step += 1
