@@ -528,7 +528,7 @@ def train_iteration(model, i, data_chunks, target_chunks, boundaries_chunks,
 
 def train(tr_iter, va_iters, model, model_config, optimizer,
           scheduler, vocab, epoch, last_iter, train_step,
-          timeout_handler, args):
+          timeout_handler, args, scaler):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -578,12 +578,12 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
                 with model.no_sync():
                     train_loss_chunk, stats = train_iteration(
                         model, i, data_chunks, target_chunks,
-                        boundaries_chunks, args, train_step
+                        boundaries_chunks, args, train_step, scaler
                     )
             else:
                 train_loss_chunk, stats = train_iteration(
                     model, i, data_chunks, target_chunks, boundaries_chunks,
-                    args, train_step
+                    args, train_step, scaler
                 )
 
             train_loss += train_loss_chunk
@@ -830,6 +830,9 @@ def main():
                                              broadcast_buffers=False,
                                              find_unused_parameters=True,
                                              )
+    scaler = None
+    if args.fp16:
+        scaler = torch.cuda.amp.GradScaler()
 
     # Log training and model args
     if rank == 0:
@@ -866,7 +869,8 @@ def main():
                     last_iter=0,
                     train_step=train_step,
                     timeout_handler=timeout_handler,
-                    args=args
+                    args=args,
+                    scaler=scaler
                     )
 
                 if train_step == args.max_step:
