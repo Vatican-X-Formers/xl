@@ -56,8 +56,6 @@ class LMOrderedIterator(object):
 
         self.boundary_creator = boundary_creator
         self.boundaries = boundary_creator.get_boundaries(txt=self.txt).bool().transpose(0, 1).contiguous()
-        self.data = self.data.cuda()
-        self.boundaries = self.boundaries.cuda()
 
         # Number of mini-batches
         self.data_len = len(data[0])
@@ -101,7 +99,7 @@ class LMOrderedIterator(object):
             dataset,
             batch_size=1,
             shuffle=False,
-            pin_memory=False,
+            pin_memory=True,
             collate_fn=self.get_batch,
             num_workers=nw
         )
