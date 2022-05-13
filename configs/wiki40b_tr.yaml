@@ -23,9 +23,9 @@ model: &model
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   boundaries_type: 'noboundaries' # Here I define boundaries created in data loader
+   boundaries_type: 'tokenizer' # Here I define boundaries created in data loader
    boundary_ids: '[]' # Used if type == ids
-   bp_target: ['subs_entropy'] # Here I define boundaries that can be extracted from LM objective
+   bp_target: [] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
@@ -45,7 +45,7 @@ bp: &bp
 
 # This set of params is used if and only if boundaries_type = tokenizer
 tokenizer: &tokenizer
-   tokenizer_type: 'spmunigram'
+   tokenizer_type: 'spmunigram-split'
    tokenizer_vocab_size: 5000
 
 eval: &eval
@@ -54,6 +54,7 @@ eval: &eval
    eval_tgt_lengths: [512]
    eval_total_lengths: [2048]
    text_generation_interval: 25000
+   eval_batch_size: 16
 
 optim: &optim
    optim: adam
