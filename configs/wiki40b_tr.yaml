@@ -1,6 +1,6 @@
-im32: &im32
-   dataset: im32
-   data: data/im32/
+wiki40b_tr: &wiki40b_tr
+   dataset: wiki40b_tr
+   data: data/wiki40b/tr/
 
 model: &model
    d_model: 512
@@ -8,25 +8,33 @@ model: &model
    d_head: 64
    d_inner: 2048
    dropout: 0.1
-   dropatt: 0.0
+   dropatt: 0.1
    pre_lnorm: false
-   funnel_config: "[2, (6,), 2]"
+   funnel_config: "[2, (8,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
-   activation_function: relu
+   activation_function: gelu
    gather_stats: ['shortened_length']
    mask_mode: 'boundary_ends_group'
+   shuffle: true
+   roll: true
+   nw: 4
+   fp16: true
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
    boundaries_type: 'noboundaries' # Here I define boundaries created in data loader
-   boundary_ids: '["_"]' # Used if type == ids
-   bp_target: ['entropy'] # Here I define boundaries that can be extracted from LM objective
+   boundary_ids: '[]' # Used if type == ids
+   bp_target: ['subs_entropy'] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
    spikes_lower_perc: 0 # Used for spikes idea
-   value_perc: 100 # Used for calculating boundaries from data
+   value_perc: 50 # Used for calculating boundaries from data
+   group_threshold: 0.0
+   spikes_step: 100
+   spikes_left: 0
+   spikes_right: 0
 
 # If I want to add parameters on top of Transformer layers
 # I do this using this group of params that define BP
@@ -37,20 +45,21 @@ bp: &bp
 
 # This set of params is used if and only if boundaries_type = tokenizer
 tokenizer: &tokenizer
-   tokenizer_type: 'unigram'
+   tokenizer_type: 'spmunigram'
    tokenizer_vocab_size: 5000
 
 eval: &eval
    eval_interval: 10000
-   eval_tgt_lengths: [3072]
-   eval_total_lengths: [3072]
+   eval_max_steps: 500
+   eval_tgt_lengths: [512]
+   eval_total_lengths: [2048]
    text_generation_interval: 25000
 
 optim: &optim
    optim: adam
    scheduler: cosine
    lr: 0.00025
-   warmup_step: 0
+   warmup_step: 4000
    clip: 0.25
    weight_decay: 0
    adam_b1: 0.9
@@ -61,14 +70,14 @@ train: &train
    multi_gpu: ddp
    cuda: true
    max_step: 200000
-   tgt_len: 3072
+   tgt_len: 2048
    batch_size: 8
-   batch_chunk: 1
-   log_interval: 100 
+   batch_chunk: 2
+   log_interval: 100
 
 default:
    train:
-      <<: *im32
+      <<: *wiki40b_tr
       <<: *model
       <<: *bp
       <<: *tokenizer

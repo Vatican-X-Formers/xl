@@ -20,7 +20,7 @@ import random
 from torch.utils.data import DataLoader, Dataset
 import utils
 from utils.vocabulary import Vocab
-from boundary_creator import get_boundary_creator
+from boundary_creator import get_boundary_creator, SPMBoundaries
 
 
 class LMOrderedIterator(object):
@@ -74,16 +74,19 @@ class LMOrderedIterator(object):
 
         for i in range(self.data.size(1)):
             row = self.data[:, i]
+            t_row = self.txt[i]
             if self.boundaries is not None:
                 b_row = self.boundaries[:, i]
 
             shift = torch.randint(0, self.data_len, (1,), generator=rng)
 
             row = torch.cat((row[shift:], row[:shift]))
+            t_row = t_row[shift:] + t_row[:shift]
             if self.boundaries is not None:
                 b_row = torch.cat((b_row[shift:], b_row[:shift]))
 
             self.data[:, i] = row
+            self.txt[i] = t_row
             if self.boundaries is not None:
                 self.boundaries[:, i] = b_row
 
@@ -199,22 +202,7 @@ class Corpus(object):
         self.dataset = dataset
         self.data = {}
 
-        if dataset == 'text8':
-            self.vocab = Vocab(*args, **kwargs)
-            for split in ['train', 'valid', 'test']:
-                dataset_path = os.path.join(path, f'{split}.txt')
-                self.vocab.count_file(dataset_path)
-                sents = []
-                with open(dataset_path, 'r', encoding='utf-8') as f:
-                    for idx, line in enumerate(f):
-                        sents.append(line)
-                assert len(sents) == 1
-                sent = sents[0].replace(' ', '').replace('_', ' ')
-
-                self.data[split] = sent
-
-            self.vocab.build_vocab()
-        elif dataset == 'im32':
+        if dataset == 'im32':
             self.vocab = [i for i in range(256)]
 
             for split in ['train', 'valid']:
@@ -225,7 +213,7 @@ class Corpus(object):
 
             for split in ['test']:
                 self.data[split] = self.data['valid']
-        elif dataset.startswith('wiki40b'):
+        elif dataset.startswith('wiki40b') or (dataset in ['text8']):
             self.vocab = Vocab(*args, **kwargs)
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
