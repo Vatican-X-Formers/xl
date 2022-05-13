@@ -382,29 +382,37 @@ def evaluate(eval_iter, model, args, step):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
 
-            if args.is_bp:
-                assert args.bp_switch_step is None or args.bp_switch_step < step
-                with torch.cuda.amp.autocast(args.fp16):
-                    loss, stats, aux_loss, _ = model(data,
-                                                     target,
-                                                     boundaries_to_use=None,
-                                                     boundaries_to_predict=boundaries,
-                                                     step=step)
-                    loss = loss.float().mean().type_as(loss)
+            data_chunks = torch.chunk(data, args.batch_chunk, 1)
+            target_chunks = torch.chunk(target, args.batch_chunk, 1)
+            if boundaries is not None:
+                boundaries_chunks = torch.chunk(boundaries, args.batch_chunk, 1)
             else:
-                # Also autoregressive tokenisers should be added here, approach 1 and 3
-                assert args.boundaries_type in ['ids', 'normal', 'space_dist',
-                                                'constant', 'random_constant', 'noboundaries']
-                with torch.cuda.amp.autocast(args.fp16):
-                    loss, stats, aux_loss, _ = model(data,
-                                                     target,
-                                                     boundaries_to_use=boundaries,
-                                                     boundaries_to_predict=None,
-                                                     step=step)
-                    loss = loss.float().mean().type_as(loss)
+                boundaries_chunks = None
 
-            total_loss += seq_len * loss.item()
-            total_len += seq_len
+            for j in range(args.batch_chunk):
+                if args.is_bp:
+                    assert args.bp_switch_step is None or args.bp_switch_step < step
+                    with torch.cuda.amp.autocast(args.fp16):
+                        loss, stats, aux_loss, _ = model(data_chunks[i],
+                                                         target_chunks[i],
+                                                         boundaries_to_use=None,
+                                                         boundaries_to_predict=boundaries_chunks[i],
+                                                         step=step)
+                        loss = loss.float().mean().type_as(loss)
+                else:
+                    # Also autoregressive tokenisers should be added here, approach 1 and 3
+                    assert args.boundaries_type in ['ids', 'normal', 'space_dist',
+                                                    'constant', 'random_constant', 'noboundaries']
+                    with torch.cuda.amp.autocast(args.fp16):
+                        loss, stats, aux_loss, _ = model(data_chunks[i],
+                                                         target_chunks[i],
+                                                         boundaries_to_use=boundaries_chunks[i],
+                                                         boundaries_to_predict=None,
+                                                         step=step)
+                        loss = loss.float().mean().type_as(loss)
+
+                total_loss += seq_len * loss.item()
+                total_len += seq_len
 
             for k, v in stats.items():
                 stats_agg[k].append(v)
