@@ -393,10 +393,10 @@ def evaluate(eval_iter, model, args, step):
                 if args.is_bp:
                     assert args.bp_switch_step is None or args.bp_switch_step < step
                     with torch.cuda.amp.autocast(args.fp16):
-                        loss, stats, aux_loss, _ = model(data_chunks[i],
-                                                         target_chunks[i],
+                        loss, stats, aux_loss, _ = model(data_chunks[i].contiguous(),
+                                                         target_chunks[i].contiguous(),
                                                          boundaries_to_use=None,
-                                                         boundaries_to_predict=boundaries_chunks[i] if boundaries_chunks is not None else None,
+                                                         boundaries_to_predict=boundaries_chunks[i].contiguous() if boundaries_chunks is not None else None,
                                                          step=step)
                         loss = loss.float().mean().type_as(loss)
                 else:
@@ -404,9 +404,9 @@ def evaluate(eval_iter, model, args, step):
                     assert args.boundaries_type in ['ids', 'normal', 'space_dist',
                                                     'constant', 'random_constant', 'noboundaries']
                     with torch.cuda.amp.autocast(args.fp16):
-                        loss, stats, aux_loss, _ = model(data_chunks[i],
-                                                         target_chunks[i],
-                                                         boundaries_to_use=boundaries_chunks[i] if boundaries_chunks is not None else None,
+                        loss, stats, aux_loss, _ = model(data_chunks[i].contiguous(),
+                                                         target_chunks[i].contiguous(),
+                                                         boundaries_to_use=boundaries_chunks[i].contiguous() if boundaries_chunks is not None else None,
                                                          boundaries_to_predict=None,
                                                          step=step)
                         loss = loss.float().mean().type_as(loss)
