@@ -396,7 +396,7 @@ def evaluate(eval_iter, model, args, step):
                         loss, stats, aux_loss, _ = model(data_chunks[i],
                                                          target_chunks[i],
                                                          boundaries_to_use=None,
-                                                         boundaries_to_predict=boundaries_chunks[i],
+                                                         boundaries_to_predict=boundaries_chunks[i] if boundaries_chunks is not None else None,
                                                          step=step)
                         loss = loss.float().mean().type_as(loss)
                 else:
@@ -406,7 +406,7 @@ def evaluate(eval_iter, model, args, step):
                     with torch.cuda.amp.autocast(args.fp16):
                         loss, stats, aux_loss, _ = model(data_chunks[i],
                                                          target_chunks[i],
-                                                         boundaries_to_use=boundaries_chunks[i],
+                                                         boundaries_to_use=boundaries_chunks[i] if boundaries_chunks is not None else None,
                                                          boundaries_to_predict=None,
                                                          step=step)
                         loss = loss.float().mean().type_as(loss)
