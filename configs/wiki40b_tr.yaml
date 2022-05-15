@@ -10,7 +10,7 @@ model: &model
    dropout: 0.1
    dropatt: 0.1
    pre_lnorm: false
-   funnel_config: "[2, (8,), 2]"
+   funnel_config: "[2, (16,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
    activation_function: gelu
@@ -30,7 +30,7 @@ boundaries: &boundaries
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
    spikes_lower_perc: 0 # Used for spikes idea
-   value_perc: 50 # Used for calculating boundaries from data
+   value_perc: 100 # Used for calculating boundaries from data
    group_threshold: 0.0
    spikes_step: 100
    spikes_left: 0
@@ -73,7 +73,7 @@ train: &train
    max_step: 200000
    tgt_len: 2048
    batch_size: 8
-   batch_chunk: 2
+   batch_chunk: 1
    log_interval: 100
 
 default:

@@ -1,6 +1,6 @@
-text8: &text8
-   dataset: text8
-   data: data/text8
+wiki40b_pl: &wiki40b_pl
+   dataset: wiki40b_pl
+   data: data/wiki40b/pl/
 
 model: &model
    d_model: 512
@@ -10,7 +10,7 @@ model: &model
    dropout: 0.1
    dropatt: 0.1
    pre_lnorm: false
-   funnel_config: "[2, (8,), 2]"
+   funnel_config: "[2, (16,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
    activation_function: gelu
@@ -23,14 +23,14 @@ model: &model
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   boundaries_type: 'noboundaries' # Here I define boundaries created in data loader
+   boundaries_type: 'tokenizer' # Here I define boundaries created in data loader
    boundary_ids: '[]' # Used if type == ids
-   bp_target: ['subs_entropy'] # Here I define boundaries that can be extracted from LM objective
+   bp_target: [] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
    spikes_lower_perc: 0 # Used for spikes idea
-   value_perc: 60 # Used for calculating boundaries from data
+   value_perc: 100 # Used for calculating boundaries from data
    group_threshold: 0.0
    spikes_step: 100
    spikes_left: 0
@@ -45,8 +45,8 @@ bp: &bp
 
 # This set of params is used if and only if boundaries_type = tokenizer
 tokenizer: &tokenizer
-   tokenizer_type: ''
-   tokenizer_vocab_size: 0
+   tokenizer_type: 'spmunigram'
+   tokenizer_vocab_size: 5000
 
 eval: &eval
    eval_interval: 10000
@@ -54,6 +54,7 @@ eval: &eval
    eval_tgt_lengths: [512]
    eval_total_lengths: [2048]
    text_generation_interval: 25000
+   eval_batch_size: 16
 
 optim: &optim
    optim: adam
@@ -72,12 +73,12 @@ train: &train
    max_step: 200000
    tgt_len: 2048
    batch_size: 8
-   batch_chunk: 2
+   batch_chunk: 1
    log_interval: 100
 
 default:
    train:
-      <<: *text8
+      <<: *wiki40b_pl
       <<: *model
       <<: *bp
       <<: *tokenizer
