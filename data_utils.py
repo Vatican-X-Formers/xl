@@ -200,6 +200,7 @@ class ImageDataset(Dataset):
 class Corpus(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
+        self.path = path
         self.data = {}
 
         if dataset == 'im32':
@@ -231,6 +232,7 @@ class Corpus(object):
     def extend_kwargs_for_bc(self, **kwargs):
         kwargs['boundary_ids'] = [self.vocab.sym2idx[c] for c in eval(kwargs['boundary_ids'])]
         kwargs['dataset'] = self.dataset
+        kwargs['dataset_path'] = self.path
         return kwargs
 
     def get_iterator(self, split, **kwargs):

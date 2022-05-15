@@ -225,7 +225,10 @@ class SPMBoundaries(BoundaryCreator):
         super().__init__(boundaries_type, **kwargs)
         filename = self.get_tokenizer_filename(tokenizer_type,
                                                tokenizer_vocab_size)
-        filepath = os.path.join(tokenizer_save_dir, 'spm', kwargs['dataset'], filename)
+        filepath = os.path.join(tokenizer_save_dir,
+                                'spm',
+                                kwargs['dataset_path'].replace('data/', ''),
+                                filename)
         self.tokenizer = spm.SentencePieceProcessor(model_file=filepath)
 
     def get_tokenizer_filename(self, tokenizer_type, vocab_size):
