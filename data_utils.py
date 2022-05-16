@@ -25,7 +25,7 @@ from boundary_creator import get_boundary_creator, SPMBoundaries
 
 class LMOrderedIterator(object):
     def __init__(self, data, bsz, tgt_len, ext_len, vocab,
-                 boundary_creator, dataset, **kwargs):
+                 boundary_creator, dataset, online_boundaries, **kwargs):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
@@ -67,6 +67,7 @@ class LMOrderedIterator(object):
 
         self.last_iter = None
         self.device = kwargs['device']
+        self.online_boundaries = online_boundaries
 
     def roll(self, seed):
         rng = torch.Generator()
@@ -104,6 +105,16 @@ class LMOrderedIterator(object):
         boundaries = None
         if self.boundaries is not None:
             boundaries = self.boundaries[beg_idx:end_idx]
+
+            if self.online_boundaries and isinstance(self.boundary_creator, SPMBoundaries):
+                to_segment, to_take = 100, 50
+                txts = [self.txt[j][beg_idx:beg_idx + to_segment] for j in range(len(self.txt))]
+
+                early_boundaries = self.boundary_creator.get_boundaries(txt=txts)
+                early_boundaries = early_boundaries.bool().transpose(0, 1).contiguous()
+                early_boundaries = early_boundaries[:to_take]
+                boundaries = boundaries.clone()
+                boundaries[:to_take] = early_boundaries
 
         return data, target, seq_len, boundaries
 
@@ -216,6 +227,7 @@ class Corpus(object):
                 self.data[split] = self.data['valid']
         elif dataset.startswith('wiki40b') or (dataset in ['text8']):
             self.vocab = Vocab(*args, **kwargs)
+            # for split in ['valid']:
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
                 sents = []
@@ -226,6 +238,9 @@ class Corpus(object):
                 sent = sents[0]
                 self.vocab.counter.update(sent)
                 self.data[split] = sent
+
+            # self.data['train'] = self.data['valid']
+            # self.data['test'] = self.data['valid']
 
             self.vocab.build_vocab()
 

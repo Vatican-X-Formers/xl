@@ -130,6 +130,7 @@ def parse_args():
     boundaries.add_argument('--tokenizer_dropout', type=float)
     boundaries.add_argument('--tokenizer_save_dir', default='./tokenizer_data/')
     boundaries.add_argument('--tokenizer_algorithm', default=None)
+    boundaries.add_argument('--online_boundaries', action='store_true')
     boundaries.add_argument('--bp_target', type=str, nargs='+')
     boundaries.add_argument('--spikes_upper_perc', type=int, default=100)
     boundaries.add_argument('--spikes_lower_perc', type=int, default=0)
@@ -478,6 +479,7 @@ def get_boundary_config(args):
         'tokenizer_dropout': args.tokenizer_dropout,
         'tokenizer_save_dir': args.tokenizer_save_dir,
         'tokenizer_algorithm': args.tokenizer_algorithm,
+        'online_boundaries': args.online_boundaries,
     }
     return boundary_config
 
@@ -608,8 +610,20 @@ def train(tr_iter, va_iters, model, model_config, optimizer,
         if args.fp16:
             scaler.unscale_(optimizer)
 
-        stats_agg['grad_l2'].append(sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
-        stats_agg['weights_l2'].append(sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5)
+        grad_l2 = sum(p.grad.detach().data.norm(2).item() ** 2 for p in model.parameters()) ** 0.5
+        weights_l2 = sum(p.detach().norm(2).item() ** 2 for p in model.parameters()) ** 0.5
+
+        # if grad_l2 is None or math.isnan(grad_l2) or math.isinf(grad_l2):
+        #     pdb.set_trace()
+
+        #     for a, b in model.named_parameters():
+        #         tmp = b.grad.detach().data.norm(2).item() ** 2
+        #         if tmp is None or math.isnan(tmp) or math.isinf(tmp):
+        #             pdb.set_trace()
+        #             pass
+
+        stats_agg['grad_l2'].append(grad_l2)
+        stats_agg['weights_l2'].append(weights_l2)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         if args.fp16:
