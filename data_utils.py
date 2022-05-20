@@ -245,7 +245,7 @@ class Corpus(object):
         return kwargs
 
     def get_iterator(self, split, **kwargs):
-        if self.dataset in ['text8'] or self.dataset.startswith('wiki40b'):
+        if self.dataset in ['text8', 'ptb'] or self.dataset.startswith('wiki40b'):
             kwargs = self.extend_kwargs_for_bc(**kwargs)
             return LMOrderedIterator(
                 data=self.data[split],
