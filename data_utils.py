@@ -230,14 +230,11 @@ class Corpus(object):
             self.vocab = Vocab(*args, **kwargs)
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
-                sents = []
                 with open(dataset_path, 'r', encoding='utf-8') as f:
-                    for idx, line in enumerate(f):
-                        sents.append(line)
-                assert len(sents) == 1
-                sent = sents[0]
-                self.vocab.counter.update(sent)
-                self.data[split] = sent
+                    text = f.read()
+
+                self.vocab.counter.update(text)
+                self.data[split] = text
 
             self.vocab.build_vocab()
 
