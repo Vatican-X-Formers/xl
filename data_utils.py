@@ -215,6 +215,7 @@ class Corpus(object):
         self.data = {}
 
         if dataset == 'im32':
+            raise NotImplementedError
             self.vocab = [i for i in range(256)]
 
             for split in ['train', 'valid']:
@@ -225,9 +226,8 @@ class Corpus(object):
 
             for split in ['test']:
                 self.data[split] = self.data['valid']
-        elif dataset.startswith('wiki40b') or (dataset in ['text8']):
+        elif dataset.startswith('wiki40b') or (dataset in ['text8', 'ptb']):
             self.vocab = Vocab(*args, **kwargs)
-            # for split in ['valid']:
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
                 sents = []
@@ -238,9 +238,6 @@ class Corpus(object):
                 sent = sents[0]
                 self.vocab.counter.update(sent)
                 self.data[split] = sent
-
-            # self.data['train'] = self.data['valid']
-            # self.data['test'] = self.data['valid']
 
             self.vocab.build_vocab()
 
