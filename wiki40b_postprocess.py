@@ -1,7 +1,9 @@
 from collections import Counter
+import sys
 import pdb
 import re
 import os
+from multiprocessing import Pool
 
 homoglyphs = {
     ' ': ['\xa0', '\u1680', '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006', '\u2007', '\u2008', '\u2009', '\u200a', '\u2028', '\u2029', '\u202f', '\u205f'],
@@ -117,8 +119,10 @@ def process_homoglyphs(text):
 mapping = {}
 base_path = 'data/wiki40b/'
 threshold = 5
+n_chunks = 32
 
-language = 'fi'
+language = sys.argv[1]
+assert len(language)
 
 for split in ['train', 'validation', 'test']:
     dataset = os.path.join(base_path, language, f'{split}.raw.txt')
@@ -144,24 +148,27 @@ for split in ['train', 'validation', 'test']:
         counter = Counter(text)
         allowed_chars = [k for k, v in counter.items() if v > threshold]
 
-    tmp = {}
+    print('Changing unknowns')
 
-    for a, b in homoglyphs.items():
-        for c in b:
-            if c in counter:
-                tmp[c] = counter[c]
+    # After I add homoglyphs remember to collapse unknonws
 
-    pdb.set_trace()
+    chunk_len = (len(text) + n_chunks - 1) // n_chunks
+    splitted_text = [text[i:i + chunk_len] for i in range(0, len(text), chunk_len)]
 
-    print(len(counter))
-    import sys
-    sys.exit()
+    def change_unks(txt):
+        for idx, key in enumerate(counter.keys()):
+            if key not in allowed_chars:
+                txt = txt.replace(key, unk)
+        return txt
 
-    text = ''.join([c if c in allowed_chars else unk for c in text])
+    with Pool(n_chunks) as p:
+        text = ''.join(p.imap(change_unks, splitted_text))
 
     os.makedirs(os.path.dirname(f'{base_path}{language}'), exist_ok=True)
 
     filename = f'{base_path}{language}/{split}.txt'
+
+    print('Writing the file')
 
     with open(filename, 'w+') as file:
         file.write(text)
