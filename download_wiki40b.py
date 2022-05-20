@@ -18,7 +18,6 @@ assert len(language)
 
 os.makedirs(f'data/wiki40b/{language}', exist_ok=True)
 os.chmod(f'data/wiki40b/{language}', 0o777)
-sys.exit()
 
 for split in ['train', 'validation', 'test']:
     dataset = load_dataset('wiki40b', language, split=split, beam_runner='DirectRunner')
