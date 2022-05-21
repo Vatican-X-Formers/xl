@@ -785,7 +785,7 @@ def main():
     boundary_kwargs = get_boundary_config(args)
     corpus = get_lm_corpus(args.data,
                            args.dataset,
-                           max_data_len=args.max_data_len,
+                           max_data_length=args.max_data_length,
                            **boundary_kwargs)
     vocab = corpus.vocab
     args.n_token = len(vocab)
