@@ -232,6 +232,8 @@ class Corpus(object):
                 dataset_path = os.path.join(path, f'{split}.txt')
                 with open(dataset_path, 'r', encoding='utf-8') as f:
                     text = f.read()
+                if kwargs['max_data_length'] is not None:
+                    text = text[:kwargs['max_data_length']]
 
                 self.vocab.counter.update(text)
                 self.data[split] = text

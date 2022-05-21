@@ -190,6 +190,7 @@ def parse_args():
                           help='Use multiple GPU')
     training.add_argument('--same_length', action='store_true',
                           help='Use the same attn length for all tokens')
+    training.add_argument('--max_data_length', type=int, default=None)
 
     val = parser.add_argument_group('validation setup')
     val.add_argument('--eval_tgt_lengths', nargs="+")
@@ -784,6 +785,7 @@ def main():
     boundary_kwargs = get_boundary_config(args)
     corpus = get_lm_corpus(args.data,
                            args.dataset,
+                           max_data_len=args.max_data_len,
                            **boundary_kwargs)
     vocab = corpus.vocab
     args.n_token = len(vocab)
