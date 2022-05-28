@@ -99,7 +99,7 @@ def process_homoglyphs(text):
     return text
 
 
-def transform_homoglyphs(text, n_chunks=32):
+def normalise_homoglyphs(text, n_chunks=32):
     chunk_len = (len(text) + n_chunks - 1) // n_chunks
     splitted_text = [text[i:i + chunk_len] for i in range(0, len(text), chunk_len)]
 
