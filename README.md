@@ -1,9 +1,5 @@
 # Hourglass with Dynamic Pooling
 
-Requirements - ask me to do a `pip freeze`
-
-## Files
-
 - benchmarks
 	- Contains independent benchmarks of different parts of the code
 - configs
