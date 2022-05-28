@@ -216,18 +216,18 @@ class Corpus(object):
 
         if dataset == 'im32':
             raise NotImplementedError
-            self.vocab = [i for i in range(256)]
+            # self.vocab = [i for i in range(256)]
 
-            for split in ['train', 'valid']:
-                self.data[split] = []
-                with open(f'{path}{split}.txt', 'r+') as file:
-                    for line in file:
-                        self.data[split].append(f'{path}{line.strip()}')
+            # for split in ['train', 'valid']:
+            #     self.data[split] = []
+            #     with open(f'{path}{split}.txt', 'r+') as file:
+            #         for line in file:
+            #             self.data[split].append(f'{path}{line.strip()}')
 
-            for split in ['test']:
-                self.data[split] = self.data['valid']
-        elif dataset.startswith('wiki40b') or (dataset in ['text8', 'ptb',
-                                                           'cc-100']):
+            # for split in ['test']:
+            #     self.data[split] = self.data['valid']
+        elif dataset.startswith('wiki40b') or self.dataset.startswith('cc-100') \
+                or (dataset in ['text8', 'ptb']):
             self.vocab = Vocab(*args, **kwargs)
             for split in ['train', 'valid', 'test']:
                 dataset_path = os.path.join(path, f'{split}.txt')
@@ -248,7 +248,8 @@ class Corpus(object):
         return kwargs
 
     def get_iterator(self, split, **kwargs):
-        if self.dataset in ['text8', 'ptb', 'cc-100'] or self.dataset.startswith('wiki40b'):
+        if self.dataset in ['text8', 'ptb'] or \
+                self.dataset.startswith('wiki40b') or self.dataset.startswith('cc-100'):
             kwargs = self.extend_kwargs_for_bc(**kwargs)
             return LMOrderedIterator(
                 data=self.data[split],
