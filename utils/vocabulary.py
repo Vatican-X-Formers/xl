@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import os
 from collections import Counter
 from collections import OrderedDict
 
 import torch
-import utils
-import pdb
-
 
 class Vocab(object):
     def __init__(self, special=[], min_freq=0, max_size=None, lower_case=True,
@@ -34,32 +29,6 @@ class Vocab(object):
         self.delimiter = delimiter
         self.boundary_creator = boundary_creator
         self.extract_boundaries = extract_boundaries
-
-    def tokenize(self, line, add_eos=False):
-        line = line.strip()
-        # convert to lower case
-        if self.lower_case:
-            line = line.lower()
-
-        # empty delimiter '' will evaluate False
-        if self.delimiter == '':
-            symbols = line
-        else:
-            symbols = line.split(self.delimiter)
-
-        if add_eos:
-            return symbols + ['<eos>']
-        else:
-            return symbols
-
-    def count_file(self, path, add_eos=False):
-        print('counting file {} ...'.format(path))
-        assert os.path.exists(path)
-
-        with open(path, 'r', encoding='utf-8') as f:
-            for idx, line in enumerate(f):
-                symbols = self.tokenize(line, add_eos=add_eos)
-                self.counter.update(symbols)
 
     def build_vocab(self):
         print('building vocab with min_freq={}, max_size={}'.format(
@@ -79,31 +48,6 @@ class Vocab(object):
 
         print('final vocab size {} from {} unique tokens'.format(
             len(self), len(self.counter)))
-
-    def encode_file(self, path, add_eos=True, boundary_creator=None, extract_boundaries=False):
-        print('encoding file {} ...'.format(path))
-        assert os.path.exists(path)
-
-        encoded_text = []
-        if extract_boundaries:
-            boundaries = []
-        else:
-            boundaries = None
-
-        with open(path, 'r', encoding='utf-8') as f:
-            for idx, line in enumerate(f):
-                symbols = self.tokenize(line, add_eos=add_eos)
-                encoded_text.append(self.convert_to_tensor(symbols))
-                if extract_boundaries:
-                    line_cleaned = line.replace(' ', '').replace('_', ' ')
-                    boundaries.append(boundary_creator.get_boundaries(line_cleaned))
-
-        if extract_boundaries:
-            boundaries = torch.cat(boundaries)
-
-        encoded_text = torch.cat(encoded_text)
-
-        return encoded_text, boundaries
 
     def add_special(self, sym):
         if sym not in self.sym2idx:
