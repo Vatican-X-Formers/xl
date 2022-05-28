@@ -11,7 +11,8 @@ os.makedirs(f'data/wiki40b/{language}', exist_ok=True)
 os.chmod(f'data/wiki40b/{language}', 0o777)
 
 for split in ['train', 'validation', 'test']:
-    dataset = load_dataset('wiki40b', language, split=split, beam_runner='DirectRunner')
+    dataset = load_dataset('wiki40b', language, split=split,
+                           cache_dir='./cache', beam_runner='DirectRunner')
 
     text = '\n'.join(dataset['text'])
 
