@@ -18,12 +18,12 @@ x = spm.SentencePieceTrainer.train(input=f'{prefix}',
                                    vocab_size=tokens,
                                    character_coverage=1.0,
                                    max_sentence_length=int(1e9),
-                                   split_by_whitespace=True,
-                                   split_digits=True,
-                                   split_by_unicode_script=True,
+                                   split_by_whitespace=True, # important prior 
+                                   split_digits=True, # non default option, but made sense to me
+                                   split_by_unicode_script=True, # default
                                    num_threads=32,
-                                   max_sentencepiece_length=16,
+                                   max_sentencepiece_length=16, # default
                                    add_dummy_prefix=True,
                                    remove_extra_whitespaces=True,
-                                   normalization_rule_name='identity',
+                                   normalization_rule_name='identity', # non default, without that option spm normalises some unicode symbols and it affects extraction of boundaries afterwards, therefore we don't normalise
                                   )
