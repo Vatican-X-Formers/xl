@@ -1,6 +1,6 @@
-wiki40b_tr: &wiki40b_tr
-   dataset: wiki40b_tr
-   data: data/wiki40b/tr/
+wiki40b_fi: &wiki40b_fi
+   dataset: wiki40b_fi
+   data: data/wiki40b/fi/
 
 model: &model
    d_model: 512
@@ -10,7 +10,7 @@ model: &model
    dropout: 0.1
    dropatt: 0.1
    pre_lnorm: false
-   funnel_config: "[12, (0,), 0]"
+   funnel_config: "[2, (8,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
    activation_function: gelu
@@ -23,7 +23,7 @@ model: &model
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   boundaries_type: '' # Here I define boundaries created in data loader
+   boundaries_type: 'tokenizer' # Here I define boundaries created in data loader
    boundary_ids: '[]' # Used if type == ids
    bp_target: [] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
@@ -39,13 +39,13 @@ boundaries: &boundaries
 # If I want to add parameters on top of Transformer layers
 # I do this using this group of params that define BP
 bp: &bp
-   bp_mode: 'none'
+   bp_mode: 'default'
    bp_capacity: 'nonlinear'
    bp_switch_step: 0 # This means I don't use teacher forcing
 
 # This set of params is used if and only if boundaries_type = tokenizer
 tokenizer: &tokenizer
-   tokenizer_type: 'spmunigram-split'
+   tokenizer_type: 'spmunigram'
    tokenizer_vocab_size: 5000
 
 eval: &eval
@@ -78,7 +78,7 @@ train: &train
 
 default:
    train:
-      <<: *wiki40b_tr
+      <<: *wiki40b_fi
       <<: *model
       <<: *bp
       <<: *tokenizer

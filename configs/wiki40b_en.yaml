@@ -20,13 +20,15 @@ model: &model
    roll: true
    nw: 4
    fp16: true
+   max_data_length: 90000000
+   affinity: "disabled"
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   boundaries_type: 'ids' # Here I define boundaries created in data loader
+   boundaries_type: 'constant' # Here I define boundaries created in data loader
    boundary_ids: '[" "]' # Used if type == ids
    bp_target: [] # Here I define boundaries that can be extracted from LM objective
-   fixed_sf: 0 # Used if type == constant
+   fixed_sf: 2 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
    spikes_upper_perc: 100 # Used for spikes idea
    spikes_lower_perc: 0 # Used for spikes idea
@@ -73,7 +75,7 @@ train: &train
    max_step: 200000
    tgt_len: 2048
    batch_size: 8
-   batch_chunk: 2
+   batch_chunk: 1
    log_interval: 100
 
 default:

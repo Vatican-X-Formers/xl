@@ -1,6 +1,6 @@
-wiki40b_pl: &wiki40b_pl
-   dataset: wiki40b_pl
-   data: data/wiki40b/pl/
+wiki40b_en_text8: &wiki40b_en_text8
+   dataset: wiki40b_en_text8
+   data: data/wiki40b/en/text8
 
 model: &model
    d_model: 512
@@ -10,7 +10,7 @@ model: &model
    dropout: 0.1
    dropatt: 0.1
    pre_lnorm: false
-   funnel_config: "[2, (1,), 2]"
+   funnel_config: "[2, (8,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
    activation_function: gelu
@@ -18,14 +18,13 @@ model: &model
    mask_mode: 'boundary_ends_group'
    shuffle: true
    roll: true
-   nw: 0
+   nw: 4
    fp16: true
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   online_boundaries: true
-   boundaries_type: 'tokenizer' # Here I define boundaries created in data loader
-   boundary_ids: '[]' # Used if type == ids
+   boundaries_type: 'ids' # Here I define boundaries created in data loader
+   boundary_ids: '[" "]' # Used if type == ids
    bp_target: [] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
@@ -40,7 +39,7 @@ boundaries: &boundaries
 # If I want to add parameters on top of Transformer layers
 # I do this using this group of params that define BP
 bp: &bp
-   bp_mode: 'default'
+   bp_mode: 'none'
    bp_capacity: 'nonlinear'
    bp_switch_step: 0 # This means I don't use teacher forcing
 
@@ -79,7 +78,7 @@ train: &train
 
 default:
    train:
-      <<: *wiki40b_pl
+      <<: *wiki40b_en_text8
       <<: *model
       <<: *bp
       <<: *tokenizer

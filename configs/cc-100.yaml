@@ -1,6 +1,6 @@
-ptb: &ptb
-   dataset: ptb
-   data: data/ptb
+cc-100_raw: &cc-100_raw
+   dataset: cc-100_raw
+   data: data/cc-100/raw
 
 model: &model
    d_model: 512
@@ -10,7 +10,7 @@ model: &model
    dropout: 0.1
    dropatt: 0.1
    pre_lnorm: false
-   funnel_config: "[12, (0,), 0]"
+   funnel_config: "[2, (8,), 2]"
    downsample_mode: 'average'
    upsample_mode: 'average'
    activation_function: gelu
@@ -20,11 +20,13 @@ model: &model
    roll: true
    nw: 4
    fp16: true
+   max_data_length: 90000000
+
 
 # The main set of argument for boundaries is here
 boundaries: &boundaries
-   boundaries_type: 'noboundaries' # Here I define boundaries created in data loader
-   boundary_ids: '[]' # Used if type == ids
+   boundaries_type: 'ids' # Here I define boundaries created in data loader
+   boundary_ids: '[" "]' # Used if type == ids
    bp_target: [] # Here I define boundaries that can be extracted from LM objective
    fixed_sf: 0 # Used if type == constant
    n_iters: 0 # Used if bp_target is not None
@@ -73,12 +75,12 @@ train: &train
    max_step: 200000
    tgt_len: 2048
    batch_size: 8
-   batch_chunk: 2
+   batch_chunk: 1
    log_interval: 100
 
 default:
    train:
-      <<: *ptb
+      <<: *cc-100_raw
       <<: *model
       <<: *bp
       <<: *tokenizer
